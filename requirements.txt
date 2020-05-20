@@ -1,0 +1,3 @@
+-e /home/jd/dev/firefly/python/dependency-injection
+-e /home/jd/dev/firefly/python/framework
+-e .

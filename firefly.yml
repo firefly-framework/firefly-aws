@@ -1,0 +1,19 @@
+project: firefly
+
+contexts:
+  firefly:
+  firefly_aws:
+    is_extension: true
+    bucket: firefly-aws-extension
+    storage:
+      services:
+        s3:
+          connection:
+            aws_access_key_id: ${AWS_ACCESS_KEY_ID}
+            aws_secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+      aggregates:
+        Project: s3
+
+environments:
+  dev:
+    provider: aws
