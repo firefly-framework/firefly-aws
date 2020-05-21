@@ -26,10 +26,11 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
     def run(self, event: dict, context: dict):
         print(event)
         print(context)
-        if 'httpMethod' in event:
-            return self._handle_http_event(event)
-        elif 'Records' in event and 'aws:sqs' == event['Records'][0].get('eventSource'):
-            self._handle_sqs_event(event)
+        return event
+        # if 'httpMethod' in event:
+        #     return self._handle_http_event(event)
+        # elif 'Records' in event and 'aws:sqs' == event['Records'][0].get('eventSource'):
+        #     self._handle_sqs_event(event)
 
     def _handle_http_event(self, event: dict):
         body = self._serializer.deserialize(event['body'])

@@ -50,7 +50,7 @@ from botocore.exceptions import ClientError
 from firefly_aws import S3Service
 from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join
 from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route
-from troposphere.awslambda import Function, Code, VPCConfig, Environment
+from troposphere.awslambda import Function, Code, VPCConfig, Environment, Permission
 from troposphere.constants import NUMBER
 from troposphere.iam import Role, Policy
 from troposphere.s3 import Bucket, LifecycleRule, LifecycleConfiguration
@@ -79,6 +79,10 @@ class AwsAgent(ff.ApplicationService):
             raise ff.FrameworkError('No deployment bucket configured in firefly_aws')
 
         self._project = self._configuration.all.get('project')
+        aws_config = self._configuration.contexts.get('firefly_aws')
+        self._region = aws_config.get('region')
+        self._security_group_ids = aws_config.get('vpc').get('security_group_ids')
+        self._subnet_ids = aws_config.get('vpc').get('subnet_ids')
 
         self._create_project_stack()
 
@@ -88,14 +92,6 @@ class AwsAgent(ff.ApplicationService):
             self._deploy_service(service)
 
     def _deploy_service(self, service: ff.Service):
-        aws_config = self._configuration.contexts.get(service.name).get('extensions').get('firefly_aws')
-        self._region = aws_config.get('region')
-        try:
-            self._api_gateway_resource = aws_config.get('api_gateways').get('default').get('rest_api_id')
-            self._api_gateway_root_resource = aws_config.get('api_gateways').get('default').get('root_resource_id')
-        except AttributeError:
-            self._api_gateway_resource = None
-
         context = self._context_map.get_context(service.name)
         self._package_and_deploy_code(context)
 
@@ -137,10 +133,28 @@ class AwsAgent(ff.ApplicationService):
             MemorySize=Ref(memory_size),
             Timeout=Ref(timeout_gateway),
             VpcConfig=VPCConfig(
-                SecurityGroupIds=aws_config.get('vpc').get('security_group_ids'),
-                SubnetIds=aws_config.get('vpc').get('subnet_ids')
+                SecurityGroupIds=self._security_group_ids,
+                SubnetIds=self._subnet_ids
             ),
             Environment=self._lambda_environment()
+        ))
+
+        template.add_resource(Permission(
+            f'{self._lambda_resource_name(service)}SyncPermission',
+            Action='lambda:InvokeFunction',
+            FunctionName=f'{self._service_name(service.name)}Sync',
+            Principal='apigateway.amazonaws.com',
+            SourceArn=Join('', [
+                'arn:aws:execute-api:',
+                self._region,
+                ':',
+                self._account_id,
+                ':',
+                ImportValue(self._rest_api_reference()),
+                '/*/*/',
+                inflection.dasherize(context.name),
+            ]),
+            DependsOn=api_lambda
         ))
 
         template.add_resource(Function(
@@ -156,8 +170,8 @@ class AwsAgent(ff.ApplicationService):
             MemorySize=Ref(memory_size),
             Timeout=Ref(timeout_async),
             VpcConfig=VPCConfig(
-                SecurityGroupIds=aws_config.get('vpc').get('security_group_ids'),
-                SubnetIds=aws_config.get('vpc').get('subnet_ids')
+                SecurityGroupIds=self._security_group_ids,
+                SubnetIds=self._subnet_ids
             ),
             Environment=self._lambda_environment()
         ))
