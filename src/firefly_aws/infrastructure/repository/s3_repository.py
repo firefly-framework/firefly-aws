@@ -27,10 +27,10 @@ class S3Repository(ff.Repository[T]):
     _s3_client = None
     _serializer: ff.Serializer = None
 
-    def __init__(self, bucket: str, prefix: str = 'aggregates'):
+    def __init__(self, bucket: str, prefix: str = 'object-store/aggregates'):
         self._bucket = bucket
         name = inflection.pluralize(inflection.dasherize(inflection.underscore(self._type().__name__)))
-        self._storage_path = f'{os.environ["ENV"]}/{prefix}/{name}'.lstrip('/')
+        self._storage_path = f'{prefix}/{name}'.lstrip('/')
 
     def add(self, entity: T):
         try:

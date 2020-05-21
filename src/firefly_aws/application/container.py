@@ -18,6 +18,7 @@ import boto3
 import firefly_di as di
 
 import firefly_aws.infrastructure as infra
+import firefly_aws.domain as domain
 
 
 class Container(di.Container):
@@ -25,3 +26,4 @@ class Container(di.Container):
     s3_client = lambda self: boto3.client('s3')
     sns_client = lambda self: boto3.client('sns')
     cloudformation_client = lambda self: boto3.client('cloudformation')
+    lambda_executor: domain.LambdaExecutor = domain.LambdaExecutor

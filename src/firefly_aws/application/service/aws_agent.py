@@ -38,20 +38,23 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 from datetime import datetime
-from pprint import pprint
 from time import sleep
 
 import firefly as ff
 import inflection
+import yaml
 from botocore.exceptions import ClientError
 from firefly_aws import S3Service
-from troposphere import Template, GetAtt, Ref, Parameter, Join, ImportValue
-from troposphere.apigateway import Resource, Method, Integration, IntegrationResponse, MethodResponse, Deployment
-from troposphere.awslambda import Function, Code
+from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join
+from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route
+from troposphere.awslambda import Function, Code, VPCConfig, Environment
 from troposphere.constants import NUMBER
 from troposphere.iam import Role, Policy
-from troposphere.sns import Topic, Subscription, SubscriptionResource
+from troposphere.s3 import Bucket, LifecycleRule, LifecycleConfiguration
+from troposphere.sns import Topic, SubscriptionResource
 from troposphere.sqs import Queue
 
 
@@ -70,27 +73,29 @@ class AwsAgent(ff.ApplicationService):
         self._account_id = account_id
 
     def __call__(self, deployment: ff.Deployment, **kwargs):
-        self._bucket = self._configuration.contexts.get('firefly_aws').get('bucket')
         try:
-            self._s3_service.ensure_bucket_exists(self._bucket)
+            self._bucket = self._configuration.contexts.get('firefly_aws').get('bucket')
         except AttributeError:
             raise ff.FrameworkError('No deployment bucket configured in firefly_aws')
 
         self._project = self._configuration.all.get('project')
-        aws = self._configuration.contexts.get('firefly_aws')
-        self._region = aws.get('region')
-        try:
-            self._api_gateway_resource = aws.get('api_gateways').get('default').get('rest_api_id')
-            self._api_gateway_root_resource = aws.get('api_gateways').get('default').get('root_resource_id')
-        except AttributeError:
-            self._api_gateway_resource = None
+
+        self._create_project_stack()
 
         for service in deployment.services:
             lambda_path = inflection.dasherize(self._lambda_resource_name(service))
-            self._code_key = f'{self._env}/lambda/code/{lambda_path}/{datetime.now().isoformat()}.zip'
+            self._code_key = f'lambda/code/{lambda_path}/{datetime.now().isoformat()}.zip'
             self._deploy_service(service)
 
     def _deploy_service(self, service: ff.Service):
+        aws_config = self._configuration.contexts.get(service.name).get('extensions').get('firefly_aws')
+        self._region = aws_config.get('region')
+        try:
+            self._api_gateway_resource = aws_config.get('api_gateways').get('default').get('rest_api_id')
+            self._api_gateway_root_resource = aws_config.get('api_gateways').get('default').get('root_resource_id')
+        except AttributeError:
+            self._api_gateway_resource = None
+
         context = self._context_map.get_context(service.name)
         self._package_and_deploy_code(context)
 
@@ -117,36 +122,11 @@ class AwsAgent(ff.ApplicationService):
         ))
 
         role_title = f'{self._lambda_resource_name(service)}ExecutionRole'
-        template.add_resource(Role(
-            role_title,
-            Path='/',
-            Policies=[
-                Policy(
-                    PolicyName='root',
-                    PolicyDocument={
-                        'Version': '2012-10-17',
-                        'Statement': [{
-                            'Action': ['logs:*'],
-                            'Resource': 'arn:aws:logs:*:*:*',
-                            'Effect': 'Allow',
-                        }]
-                    }
-                )
-            ],
-            AssumeRolePolicyDocument={
-                'Version': '2012-10-17',
-                'Statement': [{
-                    'Action': ['sts:AssumeRole'],
-                    'Effect': 'Allow',
-                    'Principal': {
-                        'Service': ['lambda.amazonaws.com']
-                    }
-                }]
-            }
-        ))
+        self._add_role(role_title, template)
 
-        template.add_resource(Function(
-            f'{self._lambda_resource_name(service)}Gateway',
+        api_lambda = template.add_resource(Function(
+            f'{self._lambda_resource_name(service)}Sync',
+            FunctionName=f'{self._service_name(service.name)}Sync',
             Code=Code(
                 S3Bucket=self._bucket,
                 S3Key=self._code_key
@@ -155,11 +135,17 @@ class AwsAgent(ff.ApplicationService):
             Role=GetAtt(role_title, 'Arn'),
             Runtime='python3.7',
             MemorySize=Ref(memory_size),
-            Timeout=Ref(timeout_gateway)
+            Timeout=Ref(timeout_gateway),
+            VpcConfig=VPCConfig(
+                SecurityGroupIds=aws_config.get('vpc').get('security_group_ids'),
+                SubnetIds=aws_config.get('vpc').get('subnet_ids')
+            ),
+            Environment=self._lambda_environment()
         ))
 
         template.add_resource(Function(
             f'{self._lambda_resource_name(service)}Async',
+            FunctionName=f'{self._service_name(service.name)}Async',
             Code=Code(
                 S3Bucket=self._bucket,
                 S3Key=self._code_key
@@ -168,58 +154,37 @@ class AwsAgent(ff.ApplicationService):
             Role=GetAtt(role_title, 'Arn'),
             Runtime='python3.7',
             MemorySize=Ref(memory_size),
-            Timeout=Ref(timeout_async)
+            Timeout=Ref(timeout_async),
+            VpcConfig=VPCConfig(
+                SecurityGroupIds=aws_config.get('vpc').get('security_group_ids'),
+                SubnetIds=aws_config.get('vpc').get('subnet_ids')
+            ),
+            Environment=self._lambda_environment()
         ))
 
-        methods = []
-        resources = {}
-        for gateway in service.api_gateways:
-            for endpoint in gateway.endpoints:
-                slug = inflection.camelize(inflection.underscore(
-                    f'{self._project}-{service.name}-{endpoint.route.replace("/", "-")}'
-                ).replace('__', '_'))
+        integration = template.add_resource(Integration(
+            self._integration_name(context.name),
+            ApiId=ImportValue(self._rest_api_reference()),
+            PayloadFormatVersion='2.0',
+            IntegrationType='AWS_PROXY',
+            IntegrationUri=Join('', [
+                'arn:aws:lambda:',
+                self._region,
+                ':',
+                self._account_id,
+                ':function:',
+                Ref(api_lambda),
+            ]),
+        ))
 
-                if slug not in resources:
-                    resources[slug] = template.add_resource(Resource(
-                        slug,
-                        RestApiId=ImportValue(self._api_gateway_resource),
-                        PathPart=endpoint.route.lstrip('/'),
-                        ParentId=ImportValue(self._api_gateway_root_resource)
-                    ))
-                template.add_resource(Method(
-                    f'{slug}{inflection.camelize(endpoint.method)}',
-                    DependsOn=f'{self._lambda_resource_name(service)}Gateway',
-                    RestApiId=ImportValue(self._api_gateway_resource),
-                    AuthorizationType="AWS_IAM",
-                    ResourceId=Ref(resources[slug]),
-                    HttpMethod=endpoint.method.upper(),
-                    Integration=Integration(
-                        Credentials=GetAtt(role_title, 'Arn'),
-                        Type='AWS',
-                        IntegrationHttpMethod=endpoint.method.upper(),
-                        IntegrationResponses=[
-                            IntegrationResponse(
-                                StatusCode='200'
-                            )
-                        ],
-                        Uri=Join("", [
-                            'arn:aws:apigateway:us-west-2:lambda:path/2015-03-31/functions/',
-                            GetAtt(f'{self._lambda_resource_name(service)}Gateway', 'Arn'),
-                            '/invocations'
-                        ])
-                    ),
-                    MethodResponses=[
-                        MethodResponse(
-                            'CatResponse',
-                            StatusCode='200'
-                        )
-                    ]
-                ))
-                methods.append(f'{slug}{inflection.camelize(endpoint.method)}')
-        template.add_resource(Deployment(
-            self._env,
-            DependsOn=methods,
-            RestApiId=ImportValue(self._api_gateway_resource)
+        template.add_resource(Route(
+            self._route_name(context.name),
+            ApiId=ImportValue(self._rest_api_reference()),
+            RouteKey=f'ANY /{inflection.dasherize(context.name)}',
+            # AuthorizationType='AWS_IAM',
+            AuthorizationType='NONE',
+            Target=Join('/', ['integrations', Ref(integration)]),
+            DependsOn=integration
         ))
 
         subscriptions = {}
@@ -274,26 +239,12 @@ class AwsAgent(ff.ApplicationService):
         stack_name = self._stack_name(context.name)
         try:
             self._cloudformation_client.describe_stacks(StackName=stack_name)
-            self._cloudformation_client.update_stack(
-                StackName=self._stack_name(context.name),
-                TemplateBody=template.to_json(),
-                Capabilities=['CAPABILITY_IAM']
-            )
+            self._update_stack(self._stack_name(context.name), template)
         except ClientError as e:
             if f'Stack with id {stack_name} does not exist' in str(e):
-                self._cloudformation_client.create_stack(
-                    StackName=self._stack_name(context.name),
-                    TemplateBody=template.to_json(),
-                    Capabilities=['CAPABILITY_IAM']
-                )
+                self._create_stack(self._stack_name(context.name), template)
             else:
                 raise e
-
-        status = self._cloudformation_client.describe_stacks(StackName=self._stack_name(context.name))
-        while status['StackStatus'].endswith('_IN_PROGRESS'):
-            self.info('Waiting...')
-            sleep(5)
-            status = self._cloudformation_client.describe_stacks(StackName=self._stack_name(context.name))
 
         self.info('Done')
 
@@ -309,16 +260,7 @@ class AwsAgent(ff.ApplicationService):
                 TopicName=self._topic_name(context_name)
             ))
             self.info(f'Creating stack for context "{context_name}"')
-            response = self._cloudformation_client.create_stack(
-                StackName=self._stack_name(context_name),
-                TemplateBody=template.to_json(),
-                Capabilities=['CAPABILITY_IAM']
-            )
-            status = self._cloudformation_client.describe_stacks(StackName=response['StackId'])
-            while status['StackStatus'].endswith('_IN_PROGRESS'):
-                self.info('Waiting...')
-                sleep(5)
-                status = self._cloudformation_client.describe_stacks(StackName=response['StackId'])
+            self._create_stack(self._stack_name(context_name), template)
 
     def _get_subscriptions(self, context: ff.Context):
         ret = []
@@ -339,24 +281,264 @@ class AwsAgent(ff.ApplicationService):
         return ret
 
     def _package_and_deploy_code(self, context: ff.Context):
-        pass
+        self.info('Setting up build directory')
+        if not os.path.isdir('./build'):
+            os.mkdir('./build')
+        if os.path.isdir('./build/python-sources'):
+            shutil.rmtree('./build/python-sources', ignore_errors=True)
+        os.mkdir('./build/python-sources')
+
+        self.info('Installing source files')
+        # TODO use setup.py instead?
+        import subprocess
+        subprocess.call(['pip', 'install', '-r', 'requirements.txt', '-t', './build/python-sources'])
+
+        self.info('Packaging artifact')
+        subprocess.call(['cp', 'templates/aws/handlers.py', 'build/python-sources/.'])
+        os.chdir('./build/python-sources')
+        with open('firefly.yml', 'w') as fp:
+            fp.write(yaml.dump(self._configuration.all))
+
+        subprocess.call(['find', '.', '-name', '*.so', '|', 'xargs', 'strip'])
+        subprocess.call(['find', '.', '-name', '*.so.*', '|', 'xargs', 'strip'])
+        subprocess.call(['find', '.', '-name', '*.pyc', '-delete'])
+        file_name = self._code_key.split('/')[-1]
+        subprocess.call(['zip', '-r', f'../{file_name}', '.'])
+        os.chdir('..')
+
+        self.info('Uploading artifact')
+        with open(file_name, 'rb') as fp:
+            self._s3_client.put_object(
+                Body=fp.read(),
+                Bucket=self._bucket,
+                Key=self._code_key
+            )
+        os.chdir('..')
+
+    def _create_project_stack(self):
+        update = True
+        try:
+            self._cloudformation_client.describe_stacks(StackName=self._stack_name())
+        except ClientError as e:
+            if 'does not exist' not in str(e):
+                raise e
+            update = False
+
+        self.info('Creating project stack')
+        template = Template()
+        template.set_version('2010-09-09')
+
+        memory_size = template.add_parameter(Parameter(
+            f'{self._stack_name()}MemorySize',
+            Type=NUMBER,
+            Default='3008',
+
+        ))
+
+        timeout_gateway = template.add_parameter(Parameter(
+            f'{self._stack_name()}GatewayTimeout',
+            Type=NUMBER,
+            Default='30'
+        ))
+
+        template.add_resource(Bucket(
+            inflection.camelize(inflection.underscore(self._bucket)),
+            BucketName=self._bucket,
+            AccessControl='Private',
+            LifecycleConfiguration=LifecycleConfiguration(Rules=[
+                LifecycleRule(Prefix='tmp', Status='Enabled', ExpirationInDays=1)
+            ])
+        ))
+
+        api = template.add_resource(Api(
+            self._rest_api_name(),
+            Name=f'{inflection.humanize(self._project)} {inflection.humanize(self._env)} API',
+            ProtocolType='HTTP'
+        ))
+
+        role_title = f'{self._rest_api_name()}Role'
+        self._add_role(role_title, template)
+
+        default_lambda = template.add_resource(Function(
+            f'{self._rest_api_name()}Function',
+            FunctionName=self._rest_api_name(),
+            Code=Code(
+                ZipFile='\n'.join([
+                    'def handler(event, context):',
+                    '    return event'
+                ])
+            ),
+            Handler='index.handler',
+            Role=GetAtt(role_title, 'Arn'),
+            Runtime='python3.7',
+            MemorySize=Ref(memory_size),
+            Timeout=Ref(timeout_gateway)
+        ))
+
+        integration = template.add_resource(Integration(
+            self._integration_name(),
+            ApiId=Ref(api),
+            IntegrationType='AWS_PROXY',
+            PayloadFormatVersion='2.0',
+            IntegrationUri=Join('', [
+                'arn:aws:lambda:',
+                self._region,
+                ':',
+                self._account_id,
+                ':function:',
+                Ref(default_lambda),
+            ]),
+            DependsOn=f'{self._rest_api_name()}Function'
+        ))
+
+        template.add_resource(Route(
+            self._route_name(),
+            ApiId=Ref(api),
+            RouteKey='$default',
+            AuthorizationType='NONE',
+            Target=Join('/', ['integrations', Ref(integration)]),
+            DependsOn=integration
+        ))
+
+        template.add_resource(Stage(
+            f'{self._rest_api_name()}Stage',
+            StageName='v1',
+            ApiId=Ref(api),
+            AutoDeploy=True
+        ))
+
+        template.add_resource(Deployment(
+            f'{self._rest_api_name()}Deployment',
+            ApiId=Ref(api),
+            StageName='v1',
+            DependsOn=[
+                f'{self._rest_api_name()}Stage',
+                self._route_name(),
+                self._integration_name(),
+                self._rest_api_name(),
+            ]
+        ))
+
+        template.add_output([
+            Output(
+                self._rest_api_reference(),
+                Export=Export(self._rest_api_reference()),
+                Value=Ref(api)
+            ),
+        ])
+
+        if update:
+            self._update_stack(self._stack_name(), template)
+        else:
+            self._create_stack(self._stack_name(), template)
+
+    def _add_role(self, role_name: str, template):
+        return template.add_resource(Role(
+            role_name,
+            Path='/',
+            Policies=[
+                Policy(
+                    PolicyName='root',
+                    PolicyDocument={
+                        'Version': '2012-10-17',
+                        'Statement': [
+                            {
+                                'Action': ['logs:*'],
+                                'Resource': 'arn:aws:logs:*:*:*',
+                                'Effect': 'Allow',
+                            },
+                            {
+                                'Action': [
+                                    'ec2:*NetworkInterface',
+                                    'ec2:DescribeNetworkInterfaces',
+                                ],
+                                'Resource': '*',
+                                'Effect': 'Allow',
+                            }
+                        ]
+                    }
+                )
+            ],
+            AssumeRolePolicyDocument={
+                'Version': '2012-10-17',
+                'Statement': [{
+                    'Action': ['sts:AssumeRole'],
+                    'Effect': 'Allow',
+                    'Principal': {
+                        'Service': ['lambda.amazonaws.com']
+                    }
+                }]
+            }
+        ))
+
+    def _create_stack(self, stack_name: str, template: Template):
+        self._cloudformation_client.create_stack(
+            StackName=stack_name,
+            TemplateBody=template.to_json(),
+            Capabilities=['CAPABILITY_IAM']
+        )
+        self._wait_for_stack(stack_name)
+
+    def _update_stack(self, stack_name: str, template: Template):
+        try:
+            self._cloudformation_client.update_stack(
+                StackName=stack_name,
+                TemplateBody=template.to_json(),
+                Capabilities=['CAPABILITY_IAM']
+            )
+            self._wait_for_stack(stack_name)
+        except ClientError as e:
+            if 'No updates are to be performed' in str(e):
+                return
+            raise e
+
+    def _wait_for_stack(self, stack_name: str):
+        status = self._cloudformation_client.describe_stacks(StackName=stack_name)['Stacks'][0]
+        while status['StackStatus'].endswith('_IN_PROGRESS'):
+            self.info('Waiting...')
+            sleep(5)
+            status = self._cloudformation_client.describe_stacks(StackName=stack_name)['Stacks'][0]
+
+    def _service_name(self, context: str = ''):
+        slug = f'{self._project}_{self._env}_{context}'
+        if slug.endswith('_'):
+            slug = slug.rstrip('_')
+        return f'{inflection.camelize(inflection.underscore(slug))}'
 
     def _lambda_resource_name(self, service: ff.Service):
-        slug = f'{self._project}-{self._env}-{service.name}'
-        return f'{inflection.camelize(inflection.underscore(slug))}Function'
+        return f'{self._service_name(service.name)}Function'
 
     def _queue_name(self, context: str):
-        slug = f'{self._project}_{self._env}_{context}'
-        return f'{inflection.camelize(inflection.underscore(slug))}Queue'
+        return f'{self._service_name(context)}Queue'
 
     def _topic_name(self, context: str):
-        slug = f'{self._project}_{self._env}_{context}'
-        return f'{inflection.camelize(inflection.underscore(slug))}Topic'
+        return f'{self._service_name(context)}Topic'
 
-    def _stack_name(self, context: str):
-        slug = f'{self._project}_{self._env}_{context}'
-        return f'{inflection.camelize(inflection.underscore(slug))}Stack'
+    def _integration_name(self, context: str = ''):
+        return f'{self._service_name(context)}Integration'
+
+    def _route_name(self, context: str = ''):
+        return f'{self._service_name(context)}Route'
+
+    def _stack_name(self, context: str = ''):
+        return f'{self._service_name(context)}Stack'
 
     def _subscription_name(self, queue_context: str, topic_context: str = ''):
         slug = f'{self._project}_{self._env}_{queue_context}_{topic_context}'
         return f'{inflection.camelize(inflection.underscore(slug))}Subscription'
+
+    def _rest_api_name(self):
+        slug = f'{self._project}_{self._env}'
+        return f'{inflection.camelize(inflection.underscore(slug))}Api'
+
+    def _rest_api_reference(self):
+        return f'{self._rest_api_name()}Id'
+
+    def _lambda_environment(self):
+        return Environment(
+            'LambdaEnvironment',
+            Variables={
+                'ENV': self._env,
+                'ACCOUNT_ID': self._account_id,
+            }
+        )
