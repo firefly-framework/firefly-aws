@@ -234,16 +234,20 @@ class AwsAgent(ff.ApplicationService):
                 template.add_resource(SubscriptionResource(
                     self._subscription_name(context_name),
                     Protocol='sqs',
-                    Endpoint=Ref(queue),
-                    TopicArn=Ref(topic),
+                    Endpoint=GetAtt(queue, 'Arn'),
+                    TopicArn=Join('', [
+                        'arn:aws:sns:',
+                        self._region,
+                        ':',
+                        self._account_id,
+                        ':',
+                        self._topic_name(context.name)
+                    ]),
                     FilterPolicy={
-                        '_type': 'event',
+                        '_type': ['event'],
                         '_name': [x['name'] for x in list_]
                     },
-                    DependsOn=[
-                        self._queue_name(context.name),
-                        self._topic_name(context.name),
-                    ]
+                    DependsOn=[queue, topic]
                 ))
             elif len(list_) > 0:
                 if context_name not in self._context_map.contexts:
@@ -251,15 +255,20 @@ class AwsAgent(ff.ApplicationService):
                 template.add_resource(SubscriptionResource(
                     self._subscription_name(context.name, context_name),
                     Protocol='sqs',
-                    Endpoint=Ref(queue),
-                    TopicArn=GetAtt(self._topic_name(context_name), 'Arn'),
+                    Endpoint=GetAtt(queue, 'Arn'),
+                    TopicArn=Join('', [
+                        'arn:aws:sns:',
+                        self._region,
+                        ':',
+                        self._account_id,
+                        ':',
+                        self._topic_name(context_name)
+                    ]),
                     FilterPolicy={
-                        '_type': 'event',
+                        '_type': ['event'],
                         '_name': [x['name'] for x in list_]
                     },
-                    DependsOn=[
-                        self._queue_name(context.name),
-                    ]
+                    DependsOn=queue
                 ))
 
         self.info('Deploying stack')
@@ -289,21 +298,20 @@ class AwsAgent(ff.ApplicationService):
             self.info(f'Creating stack for context "{context_name}"')
             self._create_stack(self._stack_name(context_name), template)
 
-    def _get_subscriptions(self, context: ff.Context):
+    @staticmethod
+    def _get_subscriptions(context: ff.Context):
         ret = []
-        for ctx in self._context_map.contexts:
-            for service, event_types in ctx.event_listeners.items():
-                for event_type in event_types:
-                    if isinstance(event_type, str):
-                        context_name, event_name = event_type.split('.')
-                    else:
-                        context_name = event_type.get_class_context()
-                        event_name = event_type.__name__
-                    if context_name == context.name:
-                        ret.append({
-                            'name': event_name,
-                            'context': context_name,
-                        })
+        for service, event_types in context.event_listeners.items():
+            for event_type in event_types:
+                if isinstance(event_type, str):
+                    context_name, event_name = event_type.split('.')
+                else:
+                    context_name = event_type.get_class_context()
+                    event_name = event_type.__name__
+                ret.append({
+                    'name': event_name,
+                    'context': context_name,
+                })
 
         return ret
 
@@ -478,6 +486,7 @@ class AwsAgent(ff.ApplicationService):
                                 'Action': [
                                     'ec2:*NetworkInterface',
                                     'ec2:DescribeNetworkInterfaces',
+                                    's3:*',
                                 ],
                                 'Resource': '*',
                                 'Effect': 'Allow',
