@@ -32,9 +32,11 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
         print(event)
         print(context)
         if 'requestContext' in event and 'http' in event['requestContext']:
+            self.info('HTTP request')
             return self._handle_http_event(event)
 
         if 'Records' in event and 'aws:sqs' == event['Records'][0].get('eventSource'):
+            self.info('SQS message')
             self._handle_sqs_event(event)
 
         return event
@@ -45,7 +47,9 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
         method = event['requestContext']['http']['method']
 
         try:
+            self.info(f'Trying to match route: "{method} {route}"')
             message_name, params = self._rest_router.match(route, method)
+            self.info(f'Matched route')
             params['headers'] = {
                 'http_request': {
                     'headers': event['headers'],
