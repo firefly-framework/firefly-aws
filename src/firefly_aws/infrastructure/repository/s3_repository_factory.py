@@ -37,4 +37,6 @@ class S3RepositoryFactory(ff.RepositoryFactory):
 
         config = self._context_map.get_context('firefly_aws').config
 
-        return Repo(self._container.s3_client, bucket=config.get('bucket'), prefix=self._prefix)
+        return Repo(
+            self._container.s3_client, self._container.serializer, bucket=config.get('bucket'), prefix=self._prefix
+        )
