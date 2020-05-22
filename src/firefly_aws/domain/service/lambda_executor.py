@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Union
 
 import firefly as ff
@@ -22,8 +23,14 @@ import firefly as ff
 class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
     _serializer: ff.Serializer = None
     _message_factory: ff.MessageFactory = None
+    _rest_router: ff.RestRouter = None
+
+    def __init__(self):
+        self._version_matcher = re.compile(r'^/v\d')
 
     def run(self, event: dict, context: dict):
+        if 'requestContext' in event and 'http' in event['requestContext']:
+            return self._handle_http_event(event)
         print(event)
         print(context)
         return event
@@ -33,7 +40,19 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
         #     self._handle_sqs_event(event)
 
     def _handle_http_event(self, event: dict):
-        body = self._serializer.deserialize(event['body'])
+        body = self._serializer.deserialize(event['body']) if 'body' in event else None
+        route = self._version_matcher.sub('', event['rawPath'])
+        method = event['requestContext']['http']['method']
+        try:
+            message_name, params = self._rest_router.match(route, method)
+            params['headers'] = event['headers']
+            if method.lower() == 'get':
+                return self.request(message_name, data=params)
+            else:
+                return self.invoke(message_name, params)
+        except TypeError:
+            pass
+
         if event['httpMethod'].lower() == 'get':
             message = self._serializer.deserialize(event['queryStringParameters']['query'])
         else:

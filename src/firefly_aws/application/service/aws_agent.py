@@ -139,6 +139,8 @@ class AwsAgent(ff.ApplicationService):
             Environment=self._lambda_environment()
         ))
 
+        route = inflection.dasherize(context.name)
+        proxy_route = f'{route}/{{proxy+}}'
         template.add_resource(Permission(
             f'{self._lambda_resource_name(service)}SyncPermission',
             Action='lambda:InvokeFunction',
@@ -152,7 +154,8 @@ class AwsAgent(ff.ApplicationService):
                 ':',
                 ImportValue(self._rest_api_reference()),
                 '/*/*/',
-                inflection.dasherize(context.name),
+                route,
+                '*'
             ]),
             DependsOn=api_lambda
         ))
@@ -192,9 +195,19 @@ class AwsAgent(ff.ApplicationService):
         ))
 
         template.add_resource(Route(
-            self._route_name(context.name),
+            f'{self._route_name(context.name)}Base',
             ApiId=ImportValue(self._rest_api_reference()),
-            RouteKey=f'ANY /{inflection.dasherize(context.name)}',
+            RouteKey=f'ANY /{route}',
+            # AuthorizationType='AWS_IAM',
+            AuthorizationType='NONE',
+            Target=Join('/', ['integrations', Ref(integration)]),
+            DependsOn=integration
+        ))
+
+        template.add_resource(Route(
+            f'{self._route_name(context.name)}Proxy',
+            ApiId=ImportValue(self._rest_api_reference()),
+            RouteKey=f'ANY /{proxy_route}',
             # AuthorizationType='AWS_IAM',
             AuthorizationType='NONE',
             Target=Join('/', ['integrations', Ref(integration)]),

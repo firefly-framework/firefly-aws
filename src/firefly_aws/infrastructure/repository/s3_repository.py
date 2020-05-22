@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import List, Callable, Optional, Union
 
 import firefly as ff
@@ -79,4 +78,10 @@ class S3Repository(ff.Repository[T]):
         pass
 
     def __next__(self):
+        pass
+
+    def __len__(self):
+        pass
+
+    def __getitem__(self, item):
         pass
