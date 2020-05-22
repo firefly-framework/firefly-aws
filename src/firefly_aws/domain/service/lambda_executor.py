@@ -33,18 +33,17 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
         print(context)
         if 'requestContext' in event and 'http' in event['requestContext']:
             return self._handle_http_event(event)
+
+        if 'Records' in event and 'aws:sqs' == event['Records'][0].get('eventSource'):
+            self._handle_sqs_event(event)
+
         return event
-        # if 'httpMethod' in event:
-        #     return self._handle_http_event(event)
-        # elif 'Records' in event and 'aws:sqs' == event['Records'][0].get('eventSource'):
-        #     self._handle_sqs_event(event)
 
     def _handle_http_event(self, event: dict):
         body = self._serializer.deserialize(event['body']) if 'body' in event else None
         route = self._version_matcher.sub('', event['rawPath'])
-        print(f'Route: {route}')
         method = event['requestContext']['http']['method']
-        print(f'Method: {method}')
+
         try:
             message_name, params = self._rest_router.match(route, method)
             params['headers'] = {
@@ -55,44 +54,11 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
             if method.lower() == 'get':
                 return self.request(message_name, data=params)
             else:
+                if body is not None:
+                    params.extend(body)
                 return self.invoke(message_name, params)
         except TypeError:
             pass
-
-        # if event['httpMethod'].lower() == 'get':
-        #     message = self._serializer.deserialize(event['queryStringParameters']['query'])
-        # else:
-        #     message = self._serializer.deserialize(body)
-        #
-        # message.headers['http_request'] = {
-        #     'headers': event['headers'],
-        #     'method': event['httpMethod'],
-        #     # 'path': request.path,
-        #     # 'content_type': request.content_type,
-        #     # 'content_length': request.content_length,
-        #     # 'query': dict(request.query),
-        #     # 'post': dict(await request.post()),
-        #     # 'url': request._message.url,
-        # }
-        #
-        # if isinstance(message, ff.Command):
-        #     response = self.invoke(message)
-        # else:
-        #     response = self.request(message)
-        #
-        # if isinstance(response, ff.HttpResponse):
-        #     body = response.body
-        #     headers = response.headers
-        # else:
-        #     body = self._serializer.serialize(response)
-        #     headers = {}
-        #
-        # return {
-        #     'isBase64Encoded': False,
-        #     'statusCode': 200,
-        #     'headers': headers,
-        #     'body': body
-        # }
 
     def _handle_sqs_event(self, event: dict):
         for record in event['Records']:
