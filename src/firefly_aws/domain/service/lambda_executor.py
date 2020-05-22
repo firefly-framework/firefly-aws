@@ -59,7 +59,7 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
                 return self.request(message_name, data=params)
             else:
                 if body is not None:
-                    params.extend(body)
+                    params.update(body)
                 return self.invoke(message_name, params)
         except TypeError:
             pass
