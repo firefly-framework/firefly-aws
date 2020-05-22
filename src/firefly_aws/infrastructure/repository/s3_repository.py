@@ -23,10 +23,10 @@ from firefly.domain.repository.repository import T
 
 
 class S3Repository(ff.Repository[T]):
-    _s3_client = None
     _serializer: ff.Serializer = None
 
-    def __init__(self, bucket: str, prefix: str = 'object-store/aggregates'):
+    def __init__(self, s3_client, bucket: str, prefix: str = 'object-store/aggregates'):
+        self._s3_client = s3_client
         self._bucket = bucket
         name = inflection.pluralize(inflection.dasherize(inflection.underscore(self._type().__name__)))
         self._storage_path = f'{prefix}/{name}'.lstrip('/')
