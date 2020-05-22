@@ -41,4 +41,5 @@ class S3RepositoryFactory(ff.RepositoryFactory):
         params = {'bucket': config.get('bucket'), 'prefix': self._prefix}
         # TODO add prefix if one is configured
 
+        print(self._container.s3_client)
         return self._container.build(Repo, **params)

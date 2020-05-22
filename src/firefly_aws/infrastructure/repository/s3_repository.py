@@ -30,6 +30,7 @@ class S3Repository(ff.Repository[T]):
         self._bucket = bucket
         name = inflection.pluralize(inflection.dasherize(inflection.underscore(self._type().__name__)))
         self._storage_path = f'{prefix}/{name}'.lstrip('/')
+        print(self._s3_client)
 
     def add(self, entity: T):
         try:
