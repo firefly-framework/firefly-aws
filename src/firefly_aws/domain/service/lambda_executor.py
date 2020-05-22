@@ -45,7 +45,11 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
         method = event['requestContext']['http']['method']
         try:
             message_name, params = self._rest_router.match(route, method)
-            params['headers'] = event['headers']
+            params['headers'] = {
+                'http_request': {
+                    'headers': event['headers'],
+                }
+            }
             if method.lower() == 'get':
                 return self.request(message_name, data=params)
             else:
