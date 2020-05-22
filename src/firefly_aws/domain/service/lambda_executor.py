@@ -29,10 +29,10 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
         self._version_matcher = re.compile(r'^/v\d')
 
     def run(self, event: dict, context: dict):
-        if 'requestContext' in event and 'http' in event['requestContext']:
-            return self._handle_http_event(event)
         print(event)
         print(context)
+        if 'requestContext' in event and 'http' in event['requestContext']:
+            return self._handle_http_event(event)
         return event
         # if 'httpMethod' in event:
         #     return self._handle_http_event(event)
