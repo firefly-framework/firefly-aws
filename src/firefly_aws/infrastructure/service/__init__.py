@@ -12,4 +12,5 @@
 #  You should have received a copy of the GNU General Public License along with Firefly. If not, see
 #  <http://www.gnu.org/licenses/>.
 
+from .boto_message_transport import BotoMessageTransport
 from .boto_s3_service import BotoS3Service

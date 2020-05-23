@@ -47,7 +47,7 @@ import firefly as ff
 import inflection
 import yaml
 from botocore.exceptions import ClientError
-from firefly_aws import S3Service
+from firefly_aws import S3Service, ResourceNameAware
 from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join
 from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route
 from troposphere.awslambda import Function, Code, VPCConfig, Environment, Permission
@@ -59,7 +59,7 @@ from troposphere.sqs import Queue
 
 
 @ff.agent('aws')
-class AwsAgent(ff.ApplicationService):
+class AwsAgent(ff.ApplicationService, ResourceNameAware):
     _configuration: ff.Configuration = None
     _context_map: ff.ContextMap = None
     _registry: ff.Registry = None
@@ -87,7 +87,7 @@ class AwsAgent(ff.ApplicationService):
         self._create_project_stack()
 
         for service in deployment.services:
-            lambda_path = inflection.dasherize(self._lambda_resource_name(service))
+            lambda_path = inflection.dasherize(self._lambda_resource_name(service.name))
             self._code_key = f'lambda/code/{lambda_path}/{datetime.now().isoformat()}.zip'
             self._deploy_service(service)
 
@@ -99,29 +99,29 @@ class AwsAgent(ff.ApplicationService):
         template.set_version('2010-09-09')
 
         memory_size = template.add_parameter(Parameter(
-            f'{self._lambda_resource_name(service)}MemorySize',
+            f'{self._lambda_resource_name(service.name)}MemorySize',
             Type=NUMBER,
             Default='3008',
 
         ))
 
         timeout_gateway = template.add_parameter(Parameter(
-            f'{self._lambda_resource_name(service)}GatewayTimeout',
+            f'{self._lambda_resource_name(service.name)}GatewayTimeout',
             Type=NUMBER,
             Default='30'
         ))
 
         timeout_async = template.add_parameter(Parameter(
-            f'{self._lambda_resource_name(service)}AsyncTimeout',
+            f'{self._lambda_resource_name(service.name)}AsyncTimeout',
             Type=NUMBER,
             Default='900'
         ))
 
-        role_title = f'{self._lambda_resource_name(service)}ExecutionRole'
+        role_title = f'{self._lambda_resource_name(service.name)}ExecutionRole'
         self._add_role(role_title, template)
 
         api_lambda = template.add_resource(Function(
-            f'{self._lambda_resource_name(service)}Sync',
+            f'{self._lambda_resource_name(service.name)}Sync',
             FunctionName=f'{self._service_name(service.name)}Sync',
             Code=Code(
                 S3Bucket=self._bucket,
@@ -136,13 +136,13 @@ class AwsAgent(ff.ApplicationService):
                 SecurityGroupIds=self._security_group_ids,
                 SubnetIds=self._subnet_ids
             ),
-            Environment=self._lambda_environment()
+            Environment=self._lambda_environment(context)
         ))
 
         route = inflection.dasherize(context.name)
         proxy_route = f'{route}/{{proxy+}}'
         template.add_resource(Permission(
-            f'{self._lambda_resource_name(service)}SyncPermission',
+            f'{self._lambda_resource_name(service.name)}SyncPermission',
             Action='lambda:InvokeFunction',
             FunctionName=f'{self._service_name(service.name)}Sync',
             Principal='apigateway.amazonaws.com',
@@ -161,7 +161,7 @@ class AwsAgent(ff.ApplicationService):
         ))
 
         template.add_resource(Function(
-            f'{self._lambda_resource_name(service)}Async',
+            f'{self._lambda_resource_name(service.name)}Async',
             FunctionName=f'{self._service_name(service.name)}Async',
             Code=Code(
                 S3Bucket=self._bucket,
@@ -176,7 +176,7 @@ class AwsAgent(ff.ApplicationService):
                 SecurityGroupIds=self._security_group_ids,
                 SubnetIds=self._subnet_ids
             ),
-            Environment=self._lambda_environment()
+            Environment=self._lambda_environment(context)
         ))
 
         integration = template.add_resource(Integration(
@@ -535,46 +535,15 @@ class AwsAgent(ff.ApplicationService):
             sleep(5)
             status = self._cloudformation_client.describe_stacks(StackName=stack_name)['Stacks'][0]
 
-    def _service_name(self, context: str = ''):
-        slug = f'{self._project}_{self._env}_{context}'
-        if slug.endswith('_'):
-            slug = slug.rstrip('_')
-        return f'{inflection.camelize(inflection.underscore(slug))}'
-
-    def _lambda_resource_name(self, service: ff.Service):
-        return f'{self._service_name(service.name)}Function'
-
-    def _queue_name(self, context: str):
-        return f'{self._service_name(context)}Queue'
-
-    def _topic_name(self, context: str):
-        return f'{self._service_name(context)}Topic'
-
-    def _integration_name(self, context: str = ''):
-        return f'{self._service_name(context)}Integration'
-
-    def _route_name(self, context: str = ''):
-        return f'{self._service_name(context)}Route'
-
-    def _stack_name(self, context: str = ''):
-        return f'{self._service_name(context)}Stack'
-
-    def _subscription_name(self, queue_context: str, topic_context: str = ''):
-        slug = f'{self._project}_{self._env}_{queue_context}_{topic_context}'
-        return f'{inflection.camelize(inflection.underscore(slug))}Subscription'
-
-    def _rest_api_name(self):
-        slug = f'{self._project}_{self._env}'
-        return f'{inflection.camelize(inflection.underscore(slug))}Api'
-
-    def _rest_api_reference(self):
-        return f'{self._rest_api_name()}Id'
-
-    def _lambda_environment(self):
+    def _lambda_environment(self, context: ff.Context):
         return Environment(
             'LambdaEnvironment',
             Variables={
+                'PROJECT': self._project,
                 'ENV': self._env,
                 'ACCOUNT_ID': self._account_id,
+                'CONTEXT': context.name,
+                'REGION': self._region,
+                'BUCKET': self._bucket,
             }
         )

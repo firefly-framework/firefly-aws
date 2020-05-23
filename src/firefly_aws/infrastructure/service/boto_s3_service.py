@@ -22,17 +22,3 @@ from botocore.exceptions import ClientError
 class BotoS3Service(awsd.S3Service, ff.LoggerAware):
     _configuration: ff.Configuration = None
     _s3_client = None
-
-    def ensure_bucket_exists(self, bucket: str):
-        try:
-            self._s3_client.head_bucket(Bucket=bucket)
-        except ClientError as e:
-            if '404' in str(e):
-                self.info(f"Bucket '{bucket}' does not exist. Creating it now.")
-                self._s3_client.create_bucket(
-                    ACL='private',
-                    Bucket=bucket,
-                    CreateBucketConfiguration={
-                        'LocationConstraint': self._configuration.contexts.get('firefly_aws').get('region'),
-                    }
-                )

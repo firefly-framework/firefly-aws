@@ -11,6 +11,56 @@
 #
 #  You should have received a copy of the GNU General Public License along with Firefly. If not, see
 #  <http://www.gnu.org/licenses/>.
+from __future__ import annotations
+
+from abc import ABC
+
+import inflection
 
 from .entity import *
 from .service import *
+
+
+class ResourceNameAware(ABC):
+    _project: str = None
+    _env: str = None
+    _region: str = None
+    _account_id: str = None
+
+    def _service_name(self, context: str = ''):
+        slug = f'{self._project}_{self._env}_{context}'
+        if slug.endswith('_'):
+            slug = slug.rstrip('_')
+        return f'{inflection.camelize(inflection.underscore(slug))}'
+
+    def _lambda_resource_name(self, name: str):
+        return f'{self._service_name(name)}Function'
+
+    def _queue_name(self, context: str):
+        return f'{self._service_name(context)}Queue'
+
+    def _topic_name(self, context: str):
+        return f'{self._service_name(context)}Topic'
+
+    def _integration_name(self, context: str = ''):
+        return f'{self._service_name(context)}Integration'
+
+    def _route_name(self, context: str = ''):
+        return f'{self._service_name(context)}Route'
+
+    def _stack_name(self, context: str = ''):
+        return f'{self._service_name(context)}Stack'
+
+    def _subscription_name(self, queue_context: str, topic_context: str = ''):
+        slug = f'{self._project}_{self._env}_{queue_context}_{topic_context}'
+        return f'{inflection.camelize(inflection.underscore(slug))}Subscription'
+
+    def _rest_api_name(self):
+        slug = f'{self._project}_{self._env}'
+        return f'{inflection.camelize(inflection.underscore(slug))}Api'
+
+    def _rest_api_reference(self):
+        return f'{self._rest_api_name()}Id'
+
+    def _topic_arn(self, context_name: str):
+        return f'arn:aws:sns:{self._region}:{self._account_id}:{self._topic_name(context_name)}'

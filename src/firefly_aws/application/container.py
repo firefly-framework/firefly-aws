@@ -17,13 +17,20 @@ from __future__ import annotations
 import boto3
 import firefly_di as di
 
+import firefly as ff
 import firefly_aws.infrastructure as infra
 import firefly_aws.domain as domain
 
 
 class Container(di.Container):
-    s3_service: infra.BotoS3Service = infra.BotoS3Service
+    # AWS Services
     s3_client = lambda self: boto3.client('s3')
     sns_client = lambda self: boto3.client('sns')
     cloudformation_client = lambda self: boto3.client('cloudformation')
+    lambda_client = lambda self: boto3.client('lambda')
+    sns_client = lambda self: boto3.client('sns')
+    sqs_client = lambda self: boto3.client('sqs')
+
+    s3_service: infra.BotoS3Service = infra.BotoS3Service
     lambda_executor: domain.LambdaExecutor = domain.LambdaExecutor
+    message_transport: ff.MessageTransport = infra.BotoMessageTransport

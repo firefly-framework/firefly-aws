@@ -18,6 +18,4 @@ from abc import ABC, abstractmethod
 
 
 class S3Service(ABC):
-    @abstractmethod
-    def ensure_bucket_exists(self, bucket: str):
-        pass
+    pass
