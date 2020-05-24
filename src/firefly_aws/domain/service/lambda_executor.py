@@ -24,6 +24,8 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
     _serializer: ff.Serializer = None
     _message_factory: ff.MessageFactory = None
     _rest_router: ff.RestRouter = None
+    _s3_client = None
+    _bucket: str = None
 
     def __init__(self):
         self._version_matcher = re.compile(r'^/v\d')
@@ -69,7 +71,7 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
             body = self._serializer.deserialize(record['body'])
             message: Union[ff.Event, dict] = self._serializer.deserialize(body['Message'])
 
-            if 'PAYLOAD_KEY' in message:
+            if isinstance(message, dict) and 'PAYLOAD_KEY' in message:
                 try:
                     message = self.load_payload(message['PAYLOAD_KEY'])
                 except Exception as e:
@@ -84,7 +86,12 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
             self.complete_batch_handshake(event['Records'])
 
     def load_payload(self, key: str):
-        return {}
+        return self._serializer.deserialize(
+            self._s3_client.get_object(
+                Bucket=self._bucket,
+                Key=key
+            )
+        )
 
     def nack_message(self, record: dict):
         pass

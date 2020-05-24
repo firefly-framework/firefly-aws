@@ -34,7 +34,21 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
         try:
             self._sns_client.publish(
                 TopicArn=self._topic_arn(event.get_context()),
-                Message=self._store_large_payloads_in_s3(self._serializer.serialize(event))
+                Message=self._store_large_payloads_in_s3(self._serializer.serialize(event)),
+                MessageAttributes={
+                    '_name': {
+                        'DataType': 'String',
+                        'StringValue': event.__class__.__name__,
+                    },
+                    '_type': {
+                        'DataType': 'String',
+                        'StringValue': 'event'
+                    },
+                    '_context': {
+                        'DataType': 'String',
+                        'StringValue': event.get_context()
+                    },
+                }
             )
         except ClientError as e:
             raise ff.MessageBusError(str(e))

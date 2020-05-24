@@ -50,12 +50,12 @@ from botocore.exceptions import ClientError
 from firefly_aws import S3Service, ResourceNameAware
 from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join
 from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route
-from troposphere.awslambda import Function, Code, VPCConfig, Environment, Permission
+from troposphere.awslambda import Function, Code, VPCConfig, Environment, Permission, EventSourceMapping
 from troposphere.constants import NUMBER
 from troposphere.iam import Role, Policy
 from troposphere.s3 import Bucket, LifecycleRule, LifecycleConfiguration
 from troposphere.sns import Topic, SubscriptionResource
-from troposphere.sqs import Queue
+from troposphere.sqs import Queue, QueuePolicy, RedrivePolicy
 
 
 @ff.agent('aws')
@@ -160,7 +160,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             DependsOn=api_lambda
         ))
 
-        template.add_resource(Function(
+        async_lambda = template.add_resource(Function(
             f'{self._lambda_resource_name(service.name)}Async',
             FunctionName=f'{self._service_name(service.name)}Async',
             Code=Code(
@@ -220,9 +220,36 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                 subscriptions[subscription['context']] = []
             subscriptions[subscription['context']].append(subscription)
 
+        dlq = template.add_resource(Queue(
+            f'{self._queue_name(context.name)}Dlq',
+            QueueName=f'{self._queue_name(context.name)}Dlq',
+            VisibilityTimeout=905,
+            ReceiveMessageWaitTimeSeconds=20,
+            MessageRetentionPeriod=1209600
+        ))
+        self._queue_policy(template, dlq, f'{self._queue_name(context.name)}Dlq', subscriptions)
+
         queue = template.add_resource(Queue(
             self._queue_name(context.name),
-            QueueName=self._queue_name(context.name)
+            QueueName=self._queue_name(context.name),
+            VisibilityTimeout=905,
+            ReceiveMessageWaitTimeSeconds=20,
+            MessageRetentionPeriod=1209600,
+            RedrivePolicy=RedrivePolicy(
+                deadLetterTargetArn=GetAtt(dlq, 'Arn'),
+                maxReceiveCount=1000
+            ),
+            DependsOn=dlq
+        ))
+        self._queue_policy(template, queue, self._queue_name(context.name), subscriptions)
+
+        template.add_resource(EventSourceMapping(
+            f'{self._lambda_resource_name(context.name)}AsyncMapping',
+            BatchSize=1,
+            Enabled=True,
+            EventSourceArn=GetAtt(queue, 'Arn'),
+            FunctionName=f'{self._service_name(service.name)}Async',
+            DependsOn=[queue, async_lambda]
         ))
         topic = template.add_resource(Topic(
             self._topic_name(context.name),
@@ -235,19 +262,14 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                     self._subscription_name(context_name),
                     Protocol='sqs',
                     Endpoint=GetAtt(queue, 'Arn'),
-                    TopicArn=Join('', [
-                        'arn:aws:sns:',
-                        self._region,
-                        ':',
-                        self._account_id,
-                        ':',
-                        self._topic_name(context.name)
-                    ]),
+                    TopicArn=self._topic_arn(context.name),
                     FilterPolicy={
-                        '_type': ['event'],
-                        '_name': [x['name'] for x in list_]
+                        '_name': [x['name'] for x in list_],
                     },
-                    DependsOn=[queue, topic]
+                    RedrivePolicy={
+                        'deadLetterTargetArn': GetAtt(dlq, 'Arn'),
+                    },
+                    DependsOn=[queue, dlq, topic]
                 ))
             elif len(list_) > 0:
                 if context_name not in self._context_map.contexts:
@@ -256,19 +278,14 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                     self._subscription_name(context.name, context_name),
                     Protocol='sqs',
                     Endpoint=GetAtt(queue, 'Arn'),
-                    TopicArn=Join('', [
-                        'arn:aws:sns:',
-                        self._region,
-                        ':',
-                        self._account_id,
-                        ':',
-                        self._topic_name(context_name)
-                    ]),
+                    TopicArn=self._topic_arn(context_name),
                     FilterPolicy={
-                        '_type': ['event'],
                         '_name': [x['name'] for x in list_]
                     },
-                    DependsOn=queue
+                    RedrivePolicy={
+                        'deadLetterTargetArn': GetAtt(dlq, 'Arn'),
+                    },
+                    DependsOn=[queue, dlq]
                 ))
 
         self.info('Deploying stack')
@@ -437,7 +454,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
 
         template.add_resource(Stage(
             f'{self._rest_api_name()}Stage',
-            StageName='v1',
+            StageName='v2',
             ApiId=Ref(api),
             AutoDeploy=True
         ))
@@ -445,7 +462,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         template.add_resource(Deployment(
             f'{self._rest_api_name()}Deployment',
             ApiId=Ref(api),
-            StageName='v1',
+            StageName='v2',
             DependsOn=[
                 f'{self._rest_api_name()}Stage',
                 self._route_name(),
@@ -487,6 +504,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                                     'ec2:*NetworkInterface',
                                     'ec2:DescribeNetworkInterfaces',
                                     's3:*',
+                                    'sqs:*',
                                 ],
                                 'Resource': '*',
                                 'Effect': 'Allow',
@@ -547,3 +565,31 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                 'BUCKET': self._bucket,
             }
         )
+
+    def _queue_policy(self, template: Template, queue, queue_name: str, subscriptions: dict):
+        template.add_resource(QueuePolicy(
+            f'{queue_name}Policy',
+            Queues=[Ref(queue)],
+            PolicyDocument={
+                'Version': '2008-10-17',
+                'Id': f'{queue_name}Policy',
+                'Statement': [{
+                    'Action': [
+                        'sqs:SendMessage',
+                    ],
+                    'Effect': 'Allow',
+                    'Resource': GetAtt(queue, 'Arn'),
+                    'Principal': {
+                        'AWS': '*',
+                    },
+                    'Condition': {
+                        'ForAnyValue:ArnEquals': {
+                            'aws:SourceArn': [
+                                self._topic_arn(name) for name in subscriptions.keys()
+                            ]
+                        }
+                    }
+                }]
+            },
+            DependsOn=queue
+        ))
