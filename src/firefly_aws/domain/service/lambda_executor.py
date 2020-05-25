@@ -52,6 +52,15 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
             self.info(f'Trying to match route: "{method} {route}"')
             message_name, params = self._rest_router.match(route, method)
             self.info(f'Matched route')
+
+            if method.lower() == 'options':
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        'Access-Control-Allow-Origin': '*',
+                    }
+                }
+
             params['headers'] = {
                 'http_request': {
                     'headers': event['headers'],
