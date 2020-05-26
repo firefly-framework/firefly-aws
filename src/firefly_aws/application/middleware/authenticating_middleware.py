@@ -28,7 +28,7 @@ class AuthenticatingMiddleware(ff.Middleware):
     _app_client_id: str = None
 
     def __call__(self, message: ffd.Message, next_: Callable) -> ffd.Message:
-        if 'http_request' in message.headers and message.headers.get('secured', default=True):
+        if 'http_request' in message.headers and message.headers.get('secured', True):
             token = None
             for k, v in message.headers['http_request']['headers'].items():
                 if k.lower() == 'authorization':
