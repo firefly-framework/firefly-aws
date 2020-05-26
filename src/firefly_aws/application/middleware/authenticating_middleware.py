@@ -16,16 +16,14 @@ from __future__ import annotations
 
 from typing import Callable
 
-import cognitojwt
+import firefly_aws.domain as domain
 import firefly as ff
 from firefly import domain as ffd
 
 
 @ff.register_middleware(index=1)
 class AuthenticatingMiddleware(ff.Middleware, ff.LoggerAware):
-    _region: str = None
-    _cognito_id: str = None
-    _app_client_id: str = None
+    _jwt_decoder: domain.JwtDecoder = None
 
     def __call__(self, message: ffd.Message, next_: Callable) -> ffd.Message:
         self.info(f"secured: {message.headers.get('secured', True)}")
@@ -42,11 +40,7 @@ class AuthenticatingMiddleware(ff.Middleware, ff.LoggerAware):
                 raise ff.UnauthenticatedError()
 
             self.info('Decoding token')
-            claims = cognitojwt.decode(
-                token,
-                self._region,
-                self._cognito_id
-            )
+            claims = self._jwt_decoder.decode(token)
             self.info('Got sub: %s', claims['sub'])
             message.headers['sub'] = claims['sub']
 
