@@ -33,7 +33,9 @@ class AuthenticatingMiddleware(ff.Middleware, ff.LoggerAware):
             token = None
             for k, v in message.headers['http_request']['headers'].items():
                 if k.lower() == 'authorization':
-                    token = v
+                    if not v.startswith('Bearer'):
+                        raise ff.UnauthenticatedError()
+                    token = v.split(' ')[-1]
             if token is None:
                 raise ff.UnauthenticatedError()
 
