@@ -29,6 +29,7 @@ class AuthenticatingMiddleware(ff.Middleware, ff.LoggerAware):
 
     def __call__(self, message: ffd.Message, next_: Callable) -> ffd.Message:
         self.info(f"secured: {message.headers.get('secured', True)}")
+        self.info(f'headers: {message.headers}')
         if 'http_request' in message.headers and message.headers.get('secured', True):
             token = None
             for k, v in message.headers['http_request']['headers'].items():
@@ -37,13 +38,16 @@ class AuthenticatingMiddleware(ff.Middleware, ff.LoggerAware):
                         raise ff.UnauthenticatedError()
                     token = v.split(' ')[-1]
             if token is None:
+                self.info('Token not found. Bailing')
                 raise ff.UnauthenticatedError()
 
+            self.info('Decoding token')
             claims = cognitojwt.decode(
                 token,
                 self._region,
                 self._cognito_id
             )
+            self.info('Got sub: %s', claims['sub'])
             message.headers['sub'] = claims['sub']
 
         return next_(message)
