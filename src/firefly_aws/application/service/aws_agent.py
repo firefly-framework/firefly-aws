@@ -49,7 +49,7 @@ import yaml
 from botocore.exceptions import ClientError
 from firefly_aws import S3Service, ResourceNameAware
 from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join
-from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route, Authorizer, JWTConfiguration
+from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route
 from troposphere.awslambda import Function, Code, VPCConfig, Environment, Permission, EventSourceMapping
 from troposphere.constants import NUMBER
 from troposphere.iam import Role, Policy
@@ -447,7 +447,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             RouteKey='$default',
             AuthorizationType='NONE',
             Target=Join('/', ['integrations', Ref(integration)]),
-            DependsOn=[integration, authorizer]
+            DependsOn=[integration]
         ))
 
         template.add_resource(Stage(
@@ -552,7 +552,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             status = self._cloudformation_client.describe_stacks(StackName=stack_name)['Stacks'][0]
 
     def _lambda_environment(self, context: ff.Context):
-        env = context.config.get('extensions', default={}).get('firefly_aws', default={}).get('environment')
+        env = context.config.get('extensions', {}).get('firefly_aws', {}).get('environment')
 
         defaults = {
             'PROJECT': self._project,
