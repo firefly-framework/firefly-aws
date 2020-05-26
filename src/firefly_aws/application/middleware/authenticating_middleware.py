@@ -22,12 +22,13 @@ from firefly import domain as ffd
 
 
 @ff.register_middleware(index=1)
-class AuthenticatingMiddleware(ff.Middleware):
+class AuthenticatingMiddleware(ff.Middleware, ff.LoggerAware):
     _region: str = None
     _cognito_id: str = None
     _app_client_id: str = None
 
     def __call__(self, message: ffd.Message, next_: Callable) -> ffd.Message:
+        self.info(f"secured: {message.headers.get('secured', True)}")
         if 'http_request' in message.headers and message.headers.get('secured', True):
             token = None
             for k, v in message.headers['http_request']['headers'].items():
