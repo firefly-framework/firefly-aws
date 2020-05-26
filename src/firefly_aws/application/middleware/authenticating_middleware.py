@@ -21,7 +21,7 @@ import firefly as ff
 from firefly import domain as ffd
 
 
-@ff.middleware(index=1)
+@ff.register_middleware(index=1)
 class AuthenticatingMiddleware(ff.Middleware):
     _region: str = None
     _cognito_id: str = None
