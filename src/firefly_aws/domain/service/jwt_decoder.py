@@ -12,6 +12,12 @@
 #  You should have received a copy of the GNU General Public License along with Firefly. If not, see
 #  <http://www.gnu.org/licenses/>.
 
-from .jwt_decoder import JwtDecoder
-from .lambda_executor import LambdaExecutor
-from .s3_service import S3Service
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+
+class JwtDecoder(ABC):
+    @abstractmethod
+    def decode(self, token: str, client_id: str = None):
+        pass

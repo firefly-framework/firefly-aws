@@ -49,7 +49,7 @@ import yaml
 from botocore.exceptions import ClientError
 from firefly_aws import S3Service, ResourceNameAware
 from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join
-from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route
+from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route, Authorizer, JWTConfiguration
 from troposphere.awslambda import Function, Code, VPCConfig, Environment, Permission, EventSourceMapping
 from troposphere.constants import NUMBER
 from troposphere.iam import Role, Policy
@@ -198,7 +198,6 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             f'{self._route_name(context.name)}Base',
             ApiId=ImportValue(self._rest_api_reference()),
             RouteKey=f'ANY /{route}',
-            # AuthorizationType='AWS_IAM',
             AuthorizationType='NONE',
             Target=Join('/', ['integrations', Ref(integration)]),
             DependsOn=integration
@@ -208,7 +207,6 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             f'{self._route_name(context.name)}Proxy',
             ApiId=ImportValue(self._rest_api_reference()),
             RouteKey=f'ANY /{proxy_route}',
-            # AuthorizationType='AWS_IAM',
             AuthorizationType='NONE',
             Target=Join('/', ['integrations', Ref(integration)]),
             DependsOn=integration
@@ -449,7 +447,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             RouteKey='$default',
             AuthorizationType='NONE',
             Target=Join('/', ['integrations', Ref(integration)]),
-            DependsOn=integration
+            DependsOn=[integration, authorizer]
         ))
 
         template.add_resource(Stage(
@@ -554,16 +552,22 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             status = self._cloudformation_client.describe_stacks(StackName=stack_name)['Stacks'][0]
 
     def _lambda_environment(self, context: ff.Context):
+        env = context.config.get('extensions', default={}).get('firefly_aws', default={}).get('environment')
+
+        defaults = {
+            'PROJECT': self._project,
+            'ENV': self._env,
+            'ACCOUNT_ID': self._account_id,
+            'CONTEXT': context.name,
+            'REGION': self._region,
+            'BUCKET': self._bucket,
+        }
+        if env is not None:
+            defaults.update(env)
+
         return Environment(
             'LambdaEnvironment',
-            Variables={
-                'PROJECT': self._project,
-                'ENV': self._env,
-                'ACCOUNT_ID': self._account_id,
-                'CONTEXT': context.name,
-                'REGION': self._region,
-                'BUCKET': self._bucket,
-            }
+            Variables=defaults
         )
 
     def _queue_policy(self, template: Template, queue, queue_name: str, subscriptions: dict):

@@ -12,6 +12,25 @@
 #  You should have received a copy of the GNU General Public License along with Firefly. If not, see
 #  <http://www.gnu.org/licenses/>.
 
-from .jwt_decoder import JwtDecoder
-from .lambda_executor import LambdaExecutor
-from .s3_service import S3Service
+from __future__ import annotations
+
+import cognitojwt
+import firefly as ff
+import firefly_aws.domain as domain
+from cognitojwt import CognitoJWTException
+
+
+class CognitoJwtDecoder(domain.JwtDecoder):
+    _region: str = None
+    _user_pool_id: str = None
+
+    def decode(self, token: str, client_id: str = None):
+        try:
+            return cognitojwt.decode(
+                token,
+                self._region,
+                self._user_pool_id,
+                app_client_id=client_id
+            )
+        except CognitoJWTException:
+            raise ff.UnauthenticatedError()

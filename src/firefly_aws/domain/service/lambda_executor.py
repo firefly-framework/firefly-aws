@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from typing import Union
 
@@ -31,18 +32,19 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
         self._version_matcher = re.compile(r'^/v\d')
 
     def run(self, event: dict, context: dict):
-        return event
-        print(event)
-        print(context)
         if 'requestContext' in event and 'http' in event['requestContext']:
             self.info('HTTP request')
             return self._handle_http_event(event)
 
         if 'Records' in event and 'aws:sqs' == event['Records'][0].get('eventSource'):
             self.info('SQS message')
-            self._handle_sqs_event(event)
+            return self._handle_sqs_event(event)
 
-        return event
+        message = self._serializer.deserialize(event)
+        if isinstance(message, ff.Command):
+            return self.invoke(message)
+        elif isinstance(message, ff.Query):
+            return self.request(message)
 
     def _handle_http_event(self, event: dict):
         body = self._serializer.deserialize(event['body']) if 'body' in event else None
@@ -51,7 +53,10 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
 
         try:
             self.info(f'Trying to match route: "{method} {route}"')
-            message_name, params = self._rest_router.match(route, method)
+            endpoint, params = self._rest_router.match(route, method)
+            message_name = endpoint.service
+            if inspect.isclass(message_name):
+                message_name = message_name.get_fqn()
             self.info(f'Matched route')
 
             if method.lower() == 'options':
@@ -65,14 +70,22 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
             params['headers'] = {
                 'http_request': {
                     'headers': event['headers'],
-                }
+                },
+                'secured': endpoint.secured,
+                'scopes': endpoint.scopes,
             }
-            if method.lower() == 'get':
-                return self.request(message_name, data=params)
-            else:
-                if body is not None:
-                    params.update(body)
-                return self.invoke(message_name, params)
+            try:
+                if method.lower() == 'get':
+                    return self.request(message_name, data=params)
+                else:
+                    if body is not None:
+                        params.update(body)
+                    return self.invoke(message_name, params)
+            except ff.UnauthenticatedError:
+                return {'statusCode': 403}
+            except ff.UnauthorizedError:
+                return {'statusCode': 401}
+
         except TypeError:
             pass
 
