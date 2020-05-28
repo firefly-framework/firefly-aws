@@ -15,36 +15,33 @@
 from __future__ import annotations
 
 from dataclasses import fields
-from datetime import datetime
 from typing import Type
 
 import firefly as ff
 import firefly.infrastructure as ffi
 import inflection
-from firefly import domain as ffd
+
+from .data_api_storage_interface import DataApiStorageInterface
 
 
-class DataApiMysqlStorageInterface(ffi.DbApiStorageInterface):
-    _rds_data_client = None
-    _serializer: ffi.JsonSerializer = None
-    _db_arn: str = None
-    _db_secret_arn: str = None
-    _db_name: str = None
-
+class DataApiMysqlStorageInterface(DataApiStorageInterface, ffi.DbApiStorageInterface):
     def __init__(self):
         super().__init__()
         self._cache = {
-            'sql': {},
+            'sql': {
+                'insert': {},
+                'update': {},
+            },
             'indexes': {},
         }
 
     def _disconnect(self):
         pass
 
-    def _add(self, entity: ffd.Entity):
+    def _add(self, entity: ff.Entity):
         entity_type = entity.__class__
         key = entity_type.__name__
-        if key not in self._cache['sql']:
+        if key not in self._cache['sql']['insert']:
             cols = [f.name for f in self._get_indexes(entity_type)]
             placeholders = [f':{f.name}' for f in self._get_indexes(entity_type)]
 
@@ -54,46 +51,35 @@ class DataApiMysqlStorageInterface(ffi.DbApiStorageInterface):
             else:
                 cols = ''
                 placeholders = ''
-            self._cache['sql'][key] = f"""
+            self._cache['sql']['insert'][key] = f"""
                 insert into {self._fqtn(entity.__class__)} (id, obj{cols}) 
                 values (:id, :obj{placeholders})
             """
 
-        params = [
+        params = self._add_index_params(entity, [
             {'name': 'id', 'value': {'stringValue': entity.id_value()}},
             {'name': 'obj', 'value': {'stringValue': self._serializer.serialize(entity)}},
-        ]
-        for field_ in self._get_indexes(entity_type):
-            t = 'stringValue'
-            val = getattr(entity, field_.name)
-            if field_.type == 'float':
-                t = 'doubleValue'
-            elif field_.type == 'int':
-                t = 'longValue'
-            elif field_.type == 'bool':
-                t = 'booleanValue'
-            elif field_.type == 'bytes':
-                t = 'blobValue'
-            elif field_.type == 'datetime':
-                val = str(val)
-            params.append({'name': field_.name, 'value': {t: val}})
+        ])
 
-        ff.retry(lambda: self._exec(self._cache['sql'][key], params))
+        ff.retry(lambda: self._exec(self._cache['sql']['insert'][key], params))
 
-    def _all(self, entity_type: Type[ffd.Entity], criteria: ffd.BinaryOp = None, limit: int = None):
-        sql = f"select obj from {self._fqtn(entity_type)}"
+    def _all(self, entity_type: Type[ff.Entity], criteria: ff.BinaryOp = None, limit: int = None):
+        where_clause, params = self._generate_where_clause(criteria)
+        sql = f"select obj from {self._fqtn(entity_type)} {where_clause}"
+
         if limit is not None:
             sql += f" limit {limit}"
-        result = ff.retry(lambda: self._exec(sql, []))
+        # result = ff.retry(lambda: self._exec(sql, params))
+        result = self._exec(sql, params)
 
         ret = []
         for row in result['records']:
-            obj = self._serializer.deserialize(row[0])
+            obj = self._serializer.deserialize(row[0]['stringValue'])
             ret.append(entity_type.from_dict(obj))
 
         return ret
 
-    def _find(self, uuid: str, entity_type: Type[ffd.Entity]):
+    def _find(self, uuid: str, entity_type: Type[ff.Entity]):
         sql = f"select obj from {self._fqtn(entity_type)} where id = :id"
         params = [
             {'name': 'id', 'value': {'stringValue': uuid}},
@@ -104,25 +90,36 @@ class DataApiMysqlStorageInterface(ffi.DbApiStorageInterface):
         obj = self._serializer.deserialize(result['records'][0][0]['stringValue'])
         return entity_type.from_dict(obj)
 
-    def _remove(self, entity: ffd.Entity):
+    def _remove(self, entity: ff.Entity):
         sql = f"delete from {self._fqtn(entity.__class__)} where id = :id"
         params = [
             {'name': 'id', 'value': {'stringValue': entity.id_value()}},
         ]
         ff.retry(self._exec(sql, params))
 
-    def _update(self, entity: ffd.Entity):
-        sql = f"update {self._fqtn(entity.__class__)} set obj = :obj where id = :id"
-        params = [
+    def _update(self, entity: ff.Entity):
+        key = entity.__class__.__name__
+        if key not in self._cache['sql']['update']:
+            assignments = []
+            for f in self._get_indexes(entity.__class__):
+                assignments.append(f"`{f.name}` = :{f.name}")
+            setters = ''
+            if len(assignments) > 0:
+                setters = f",{','.join(assignments)}"
+            self._cache['sql']['update'][key] = f"""
+                update {self._fqtn(entity.__class__)} set obj = :obj{setters} where id = :id
+            """
+
+        params = self._add_index_params(entity, [
             {'name': 'id', 'value': {'stringValue': entity.id_value()}},
             {'name': 'obj', 'value': {'stringValue': self._serializer.serialize(entity)}},
-        ]
-        ff.retry(self._exec(sql, params))
+        ])
+        ff.retry(self._exec(self._cache['sql']['update'][key], params))
 
     def _ensure_connected(self):
         return True
 
-    def _ensure_table_created(self, entity: Type[ffd.Entity]):
+    def _ensure_table_created(self, entity: Type[ff.Entity]):
         columns = []
         indexes = []
         for i in self._get_indexes(entity):
@@ -150,17 +147,8 @@ class DataApiMysqlStorageInterface(ffi.DbApiStorageInterface):
         """
         self._exec(sql, [])
 
-    def _get_indexes(self, entity: Type[ffd.Entity]):
-        if entity not in self._cache['indexes']:
-            self._cache['indexes'][entity] = []
-            for field_ in fields(entity):
-                if 'index' in field_.metadata and field_.metadata['index'] is True:
-                    self._cache['indexes'][entity].append(field_)
-
-        return self._cache['indexes'][entity]
-
     @staticmethod
-    def _fqtn(entity: Type[ffd.Entity]):
+    def _fqtn(entity: Type[ff.Entity]):
         return inflection.tableize(entity.__name__)
 
     def _exec(self, sql: str, params: list):
