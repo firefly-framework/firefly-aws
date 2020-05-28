@@ -25,6 +25,13 @@ from .data_api_storage_interface import DataApiStorageInterface
 
 
 class DataApiMysqlStorageInterface(DataApiStorageInterface, ffi.DbApiStorageInterface):
+    _rds_data_client = None
+    _serializer: ffi.JsonSerializer = None
+    _db_arn: str = None
+    _db_secret_arn: str = None
+    _db_name: str = None
+    _cache: dict = None
+
     def __init__(self):
         super().__init__()
         self._cache = {
