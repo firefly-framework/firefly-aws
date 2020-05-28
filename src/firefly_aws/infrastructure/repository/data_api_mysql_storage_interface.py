@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from datetime import datetime
 from typing import Type
 
 import firefly as ff
@@ -24,7 +25,7 @@ import inflection
 from .data_api_storage_interface import DataApiStorageInterface
 
 
-class DataApiMysqlStorageInterface(DataApiStorageInterface, ffi.DbApiStorageInterface):
+class DataApiMysqlStorageInterface(DataApiStorageInterface):
     _rds_data_client = None
     _serializer: ffi.JsonSerializer = None
     _db_arn: str = None
@@ -165,3 +166,42 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface, ffi.DbApiStorageInte
             sql=sql,
             parameters=params
         )
+
+    def _generate_where_clause(self, criteria: ff.BinaryOp):
+        if criteria is None:
+            return '', []
+
+        clause, params = criteria.to_sql()
+        ret = []
+        for k, v in params.items():
+            ret.append(self._generate_param_entry(k, type(v), v))
+        return f'where {clause}', ret
+
+    def _get_indexes(self, entity: Type[ff.Entity]):
+        if entity not in self._cache['indexes']:
+            self._cache['indexes'][entity] = []
+            for field_ in fields(entity):
+                if 'index' in field_.metadata and field_.metadata['index'] is True:
+                    self._cache['indexes'][entity].append(field_)
+
+        return self._cache['indexes'][entity]
+
+    def _add_index_params(self, entity: ff.Entity, params: list):
+        for field_ in self._get_indexes(entity.__class__):
+            params.append(self._generate_param_entry(field_.name, field_.type, getattr(entity, field_.name)))
+        return params
+
+    @staticmethod
+    def _generate_param_entry(name: str, type_: str, val: any):
+        t = 'stringValue'
+        if type_ == 'float' or type_ is float:
+            t = 'doubleValue'
+        elif type_ == 'int' or type_ is int:
+            t = 'longValue'
+        elif type_ == 'bool' or type_ is bool:
+            t = 'booleanValue'
+        elif type_ == 'bytes' or type_ is bytes:
+            t = 'blobValue'
+        elif type_ == 'datetime' or type_ is datetime:
+            val = str(val)
+        return {'name': name, 'value': {t: val}}
