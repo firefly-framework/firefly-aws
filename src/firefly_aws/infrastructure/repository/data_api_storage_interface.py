@@ -20,15 +20,9 @@ from datetime import datetime
 from typing import Type
 
 import firefly as ff
-import firefly.infrastructure as ffi
 
 
 class DataApiStorageInterface(ABC):
-    _rds_data_client = None
-    _serializer: ffi.JsonSerializer = None
-    _db_arn: str = None
-    _db_secret_arn: str = None
-    _db_name: str = None
     _cache: dict = None
 
     def _generate_where_clause(self, criteria: ff.BinaryOp):
