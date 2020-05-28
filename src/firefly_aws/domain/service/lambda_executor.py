@@ -54,9 +54,12 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
         try:
             self.info(f'Trying to match route: "{method} {route}"')
             endpoint, params = self._rest_router.match(route, method)
-            message_name = endpoint.service
-            if inspect.isclass(message_name):
-                message_name = message_name.get_fqn()
+            if endpoint.message is not None:
+                message_name = endpoint.message if isinstance(endpoint.message, str) else endpoint.message.get_fqn()
+            else:
+                message_name = endpoint.service
+                if inspect.isclass(message_name):
+                    message_name = message_name.get_fqn()
             self.info(f'Matched route')
 
             if method.lower() == 'options':

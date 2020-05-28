@@ -69,8 +69,7 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface, ffi.DbApiStorageInte
 
         if limit is not None:
             sql += f" limit {limit}"
-        # result = ff.retry(lambda: self._exec(sql, params))
-        result = self._exec(sql, params)
+        result = ff.retry(lambda: self._exec(sql, params))
 
         ret = []
         for row in result['records']:
