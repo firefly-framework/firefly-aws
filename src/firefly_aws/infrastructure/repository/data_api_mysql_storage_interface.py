@@ -22,10 +22,8 @@ import firefly as ff
 import firefly.infrastructure as ffi
 import inflection
 
-from .data_api_storage_interface import DataApiStorageInterface
 
-
-class DataApiMysqlStorageInterface(DataApiStorageInterface):
+class DataApiMysqlStorageInterface(ffi.DbApiStorageInterface):
     _rds_data_client = None
     _serializer: ffi.JsonSerializer = None
     _db_arn: str = None
