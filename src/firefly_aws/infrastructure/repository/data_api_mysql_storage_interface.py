@@ -80,7 +80,8 @@ class DataApiMysqlStorageInterface(ffi.DbApiStorageInterface):
         ret = []
         for row in result['records']:
             obj = self._serializer.deserialize(row[0]['stringValue'])
-            ret.append(entity_type.from_dict(obj))
+            # ret.append(entity_type.from_dict(obj))
+            ret.append(entity_type(**ff.build_argument_list(obj, entity_type)))
 
         return ret
 
@@ -93,7 +94,7 @@ class DataApiMysqlStorageInterface(ffi.DbApiStorageInterface):
         if len(result['records']) == 0:
             return None
         obj = self._serializer.deserialize(result['records'][0][0]['stringValue'])
-        return entity_type.from_dict(obj)
+        return entity_type(**ff.build_argument_list(obj, entity_type))
 
     def _remove(self, entity: ff.Entity):
         sql = f"delete from {self._fqtn(entity.__class__)} where id = :id"
@@ -119,7 +120,7 @@ class DataApiMysqlStorageInterface(ffi.DbApiStorageInterface):
             {'name': 'id', 'value': {'stringValue': entity.id_value()}},
             {'name': 'obj', 'value': {'stringValue': self._serializer.serialize(entity)}},
         ])
-        ff.retry(self._exec(self._cache['sql']['update'][key], params))
+        ff.retry(lambda: self._exec(self._cache['sql']['update'][key], params))
 
     def _ensure_connected(self):
         return True

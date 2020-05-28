@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import re
 from typing import Union
 
@@ -40,7 +41,7 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
             self.info('SQS message')
             return self._handle_sqs_event(event)
 
-        message = self._serializer.deserialize(event)
+        message = self._serializer.deserialize(json.dumps(event))
         if isinstance(message, ff.Command):
             return self.invoke(message)
         elif isinstance(message, ff.Query):

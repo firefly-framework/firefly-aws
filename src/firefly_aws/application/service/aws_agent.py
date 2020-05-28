@@ -501,7 +501,9 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                                 'Action': [
                                     'ec2:*NetworkInterface',
                                     'ec2:DescribeNetworkInterfaces',
+                                    'rds-data:*',
                                     's3:*',
+                                    'secretsmanager:GetSecretValue',
                                     'sqs:*',
                                 ],
                                 'Resource': '*',

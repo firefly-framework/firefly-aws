@@ -62,7 +62,7 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
     def _invoke_lambda(self, message: Union[Command, Query]):
         try:
             response = self._lambda_client.invoke(
-                FunctionName=self._lambda_resource_name(message.get_context()),
+                FunctionName=f'{self._service_name(message.get_context())}Sync',
                 InvocationType='RequestResponse',
                 LogType='None',
                 Payload=self._serializer.serialize(message)
@@ -70,7 +70,7 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
         except ClientError as e:
             raise ff.MessageBusError(str(e))
 
-        return self._serializer.deserialize(response['Body'].read().decode('utf-8'))
+        return self._serializer.deserialize(response['Payload'].read().decode('utf-8'))
 
     def _store_large_payloads_in_s3(self, payload: str):
         if len(payload) > 64_000:
