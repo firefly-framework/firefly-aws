@@ -153,10 +153,6 @@ class DataApiMysqlStorageInterface(ffi.DbApiStorageInterface):
         """
         self._exec(sql, [])
 
-    @staticmethod
-    def _fqtn(entity: Type[ff.Entity]):
-        return inflection.tableize(entity.__name__)
-
     def _exec(self, sql: str, params: list):
         return self._rds_data_client.execute_statement(
             resourceArn=self._db_arn,
