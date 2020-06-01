@@ -14,9 +14,10 @@
 
 from __future__ import annotations
 
-from .data_api_storage_interface import DataApiStorageInterface
+
+class FireflyAwsError(Exception):
+    pass
 
 
-class DataApiMysqlStorageInterface(DataApiStorageInterface):
-    def __init__(self):
-        super().__init__()
+class DocumentTooLarge(FireflyAwsError):
+    pass

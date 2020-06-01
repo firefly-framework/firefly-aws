@@ -18,6 +18,7 @@ from abc import ABC
 import inflection
 
 from .entity import *
+from .error import *
 from .service import *
 
 
