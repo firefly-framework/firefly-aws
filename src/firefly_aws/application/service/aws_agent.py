@@ -504,6 +504,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                                     'rds-data:*',
                                     's3:*',
                                     'secretsmanager:GetSecretValue',
+                                    'sns:*',
                                     'sqs:*',
                                 ],
                                 'Resource': '*',
