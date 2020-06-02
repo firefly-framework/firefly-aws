@@ -26,8 +26,6 @@ class AuthenticatingMiddleware(ff.Middleware, ff.LoggerAware):
     _jwt_decoder: domain.JwtDecoder = None
 
     def __call__(self, message: ffd.Message, next_: Callable) -> ffd.Message:
-        self.debug('secured: %s', message.headers.get('secured', True))
-        self.debug('headers: %s', str(message.headers))
         if 'http_request' in message.headers and message.headers.get('secured', True):
             token = None
             for k, v in message.headers['http_request']['headers'].items():
