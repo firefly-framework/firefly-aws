@@ -80,11 +80,11 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
             }
             try:
                 if method.lower() == 'get':
-                    return self.request(message_name, data=params)
+                    return self._handle_http_response(self.request(message_name, data=params))
                 else:
                     if body is not None:
                         params.update(body)
-                    return self.invoke(message_name, params)
+                    return self._handle_http_response(self.invoke(message_name, params))
             except ff.UnauthenticatedError:
                 return {'statusCode': 403}
             except ff.UnauthorizedError:
@@ -92,6 +92,11 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
 
         except TypeError:
             pass
+
+    def _handle_http_response(self, response: any):
+        if isinstance(response, (dict, list)):
+            return json.loads(self._serializer.serialize(response))
+        return response
 
     def _handle_sqs_event(self, event: dict):
         for record in event['Records']:
