@@ -200,23 +200,11 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface):
     @staticmethod
     def _generate_param_entry(name: str, type_: str, val: any):
         t = 'stringValue'
-        if type_ == 'float' or type_ is float:
-            t = 'doubleValue'
-        elif type_ == 'int' or type_ is int:
-            t = 'longValue'
-        elif type_ == 'bool' or type_ is bool:
-            t = 'booleanValue'
-        elif type_ == 'bytes' or type_ is bytes:
-            t = 'blobValue'
-        elif type_ == 'datetime' or type_ is datetime:
-            val = str(val)
-        return {'name': name, 'value': {t: val}}
-
-    @staticmethod
-    def _generate_param_entry(name: str, type_: str, val: any):
-        t = 'stringValue'
         th = None
-        if type_ == 'float' or type_ is float:
+        if val is None:
+            t = 'isNull'
+            val = True
+        elif type_ == 'float' or type_ is float:
             t = 'doubleValue'
         elif type_ == 'int' or type_ is int:
             t = 'longValue'
