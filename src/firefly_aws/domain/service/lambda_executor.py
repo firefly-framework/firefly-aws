@@ -111,6 +111,9 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
                     self.nack_message(record)
                     self.error(e)
                     continue
+            if message is None:
+                self.info('Got a null message')
+                return
 
             self.dispatch(message)
         if len(event['Records']) == 1:
