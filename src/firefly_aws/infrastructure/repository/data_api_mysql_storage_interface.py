@@ -14,9 +14,20 @@
 
 from __future__ import annotations
 
+from math import ceil
+from typing import Type
+
+import firefly as ff
+
 from .data_api_storage_interface import DataApiStorageInterface
 
 
 class DataApiMysqlStorageInterface(DataApiStorageInterface):
     def __init__(self):
         super().__init__()
+
+    def _get_average_row_size(self, entity: Type[ff.Entity]):
+        result = ff.retry(
+            lambda: self._exec(f"select CEIL(AVG(LENGTH(obj))) from {self._fqtn(entity)}", [])
+        )
+        return result['records'][0][0]['longValue'] / 1024

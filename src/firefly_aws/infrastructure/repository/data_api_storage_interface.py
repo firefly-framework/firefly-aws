@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import fields
 from datetime import datetime
 from math import floor
@@ -241,8 +241,8 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
 
     def _paginate(self, sql: str, params: list, entity: Type[ff.Entity]):
         if entity.__name__ not in self._select_limits:
-            self._select_limits[entity.__name__] = 2000
-        limit = self._select_limits[entity.__name__] = 2000
+            self._select_limits[entity.__name__] = self._get_average_row_size(entity)
+        limit = floor(self._size_limit / self._select_limits[entity.__name__])
         offset = 0
 
         ret = []
@@ -251,8 +251,7 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
             try:
                 result = ff.retry(
                     lambda: self._exec(f'{sql} limit {limit} offset {offset}', params),
-                    should_retry=lambda err: 'Database returned more than the allowed response size limit'
-                                             not in str(err)
+                    should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
                 )
             except ClientError as e:
                 if 'Database returned more than the allowed response size limit' in str(e) and limit > 10:
@@ -269,3 +268,13 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
             offset += limit
 
         return ret
+
+    @abstractmethod
+    def _get_average_row_size(self, entity: Type[ff.Entity]):
+        """
+        Retrieve the average row size in KB
+
+        :param entity:
+        :return:
+        """
+        pass
