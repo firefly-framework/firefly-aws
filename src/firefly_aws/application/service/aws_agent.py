@@ -81,8 +81,8 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         self._project = self._configuration.all.get('project')
         aws_config = self._configuration.contexts.get('firefly_aws')
         self._region = aws_config.get('region')
-        self._security_group_ids = aws_config.get('vpc').get('security_group_ids')
-        self._subnet_ids = aws_config.get('vpc').get('subnet_ids')
+        self._security_group_ids = aws_config.get('vpc', {}).get('security_group_ids')
+        self._subnet_ids = aws_config.get('vpc', {}).get('subnet_ids')
 
         self._create_project_stack()
 
@@ -120,23 +120,27 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         role_title = f'{self._lambda_resource_name(service.name)}ExecutionRole'
         self._add_role(role_title, template)
 
-        api_lambda = template.add_resource(Function(
-            f'{self._lambda_resource_name(service.name)}Sync',
-            FunctionName=f'{self._service_name(service.name)}Sync',
-            Code=Code(
+        params = {
+            'FunctionName': f'{self._service_name(service.name)}Sync',
+            'Code': Code(
                 S3Bucket=self._bucket,
                 S3Key=self._code_key
             ),
-            Handler='handlers.main',
-            Role=GetAtt(role_title, 'Arn'),
-            Runtime='python3.7',
-            MemorySize=Ref(memory_size),
-            Timeout=Ref(timeout_gateway),
-            VpcConfig=VPCConfig(
+            'Handler': 'handlers.main',
+            'Role': GetAtt(role_title, 'Arn'),
+            'Runtime': 'python3.7',
+            'MemorySize': Ref(memory_size),
+            'Timeout': Ref(timeout_gateway),
+            'Environment': self._lambda_environment(context)
+        }
+        if self._security_group_ids and self._subnet_ids:
+            params['VpcConfig'] = VPCConfig(
                 SecurityGroupIds=self._security_group_ids,
                 SubnetIds=self._subnet_ids
-            ),
-            Environment=self._lambda_environment(context)
+            )
+        api_lambda = template.add_resource(Function(
+            f'{self._lambda_resource_name(service.name)}Sync',
+            **params
         ))
 
         route = inflection.dasherize(context.name)
@@ -160,23 +164,27 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             DependsOn=api_lambda
         ))
 
-        async_lambda = template.add_resource(Function(
-            f'{self._lambda_resource_name(service.name)}Async',
-            FunctionName=f'{self._service_name(service.name)}Async',
-            Code=Code(
+        params = {
+            'FunctionName': f'{self._service_name(service.name)}Async',
+            'Code': Code(
                 S3Bucket=self._bucket,
                 S3Key=self._code_key
             ),
-            Handler='handlers.main',
-            Role=GetAtt(role_title, 'Arn'),
-            Runtime='python3.7',
-            MemorySize=Ref(memory_size),
-            Timeout=Ref(timeout_async),
-            VpcConfig=VPCConfig(
+            'Handler': 'handlers.main',
+            'Role': GetAtt(role_title, 'Arn'),
+            'Runtime': 'python3.7',
+            'MemorySize': Ref(memory_size),
+            'Timeout': Ref(timeout_async),
+            'Environment': self._lambda_environment(context)
+        }
+        if self._security_group_ids and self._subnet_ids:
+            params['VpcConfig'] = VPCConfig(
                 SecurityGroupIds=self._security_group_ids,
                 SubnetIds=self._subnet_ids
-            ),
-            Environment=self._lambda_environment(context)
+            )
+        async_lambda = template.add_resource(Function(
+            f'{self._lambda_resource_name(service.name)}Async',
+            **params
         ))
 
         integration = template.add_resource(Integration(
