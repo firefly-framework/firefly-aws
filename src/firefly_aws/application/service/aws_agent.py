@@ -104,8 +104,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         memory_size = template.add_parameter(Parameter(
             f'{self._lambda_resource_name(service.name)}MemorySize',
             Type=NUMBER,
-            Default='3008',
-
+            Default='3008'
         ))
 
         timeout_gateway = template.add_parameter(Parameter(
