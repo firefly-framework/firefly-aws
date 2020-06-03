@@ -17,6 +17,7 @@ from __future__ import annotations
 from abc import ABC
 from dataclasses import fields
 from datetime import datetime
+from math import floor
 from typing import Type
 
 import firefly as ff
@@ -26,7 +27,7 @@ from botocore.exceptions import ClientError
 from firefly import domain as ffd
 
 
-class DataApiStorageInterface(ffi.DbApiStorageInterface):
+class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
     _cache: dict = None
     _rds_data_client = None
     _serializer: ffi.JsonSerializer = None
@@ -34,6 +35,10 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface):
     _db_secret_arn: str = None
     _db_name: str = None
     _size_limit: int = 1000  # In KB
+
+    def __init__(self):
+        super().__init__()
+        self._select_limits = {}
 
     def _disconnect(self):
         pass
@@ -56,17 +61,7 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface):
             sql += f" limit {limit}"
 
         try:
-            result = ff.retry(
-                lambda: self._exec(sql, params),
-                should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
-            )
-
-            ret = []
-            for row in result['records']:
-                obj = self._serializer.deserialize(row[0]['stringValue'])
-                ret.append(entity_type.from_dict(obj))
-
-            return ret
+            return self._paginate(sql, params, entity_type)
         except ClientError as e:
             if 'Database returned more than the allowed response size limit' in str(e):
                 return self._fetch_multiple_large_documents(sql, params, entity_type)
@@ -243,3 +238,34 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface):
     def _execute_ddl(self, entity: Type[ffd.Entity]):
         self._exec(f"create database if not exists {entity.get_class_context()}", [])
         self._exec(self._generate_create_table(entity), [])
+
+    def _paginate(self, sql: str, params: list, entity: Type[ff.Entity]):
+        if entity.__name__ not in self._select_limits:
+            self._select_limits[entity.__name__] = 2000
+        limit = self._select_limits[entity.__name__] = 2000
+        offset = 0
+
+        ret = []
+        while True:
+            print(f'{sql} limit {limit} offset {offset}')
+            try:
+                result = ff.retry(
+                    lambda: self._exec(f'{sql} limit {limit} offset {offset}', params),
+                    should_retry=lambda err: 'Database returned more than the allowed response size limit'
+                                             not in str(err)
+                )
+            except ClientError as e:
+                if 'Database returned more than the allowed response size limit' in str(e) and limit > 10:
+                    limit = floor(limit / 2)
+                    self._select_limits[entity.__name__] = limit
+                    continue
+                raise e
+
+            for row in result['records']:
+                obj = self._serializer.deserialize(row[0]['stringValue'])
+                ret.append(entity.from_dict(obj))
+            if len(result['records']) < limit:
+                break
+            offset += limit
+
+        return ret
