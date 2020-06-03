@@ -41,6 +41,7 @@ from __future__ import annotations
 import os
 import shutil
 from datetime import datetime
+from pprint import pprint
 from time import sleep
 
 import firefly as ff
@@ -88,7 +89,8 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
 
         for service in deployment.services:
             lambda_path = inflection.dasherize(self._lambda_resource_name(service.name))
-            self._code_key = f'lambda/code/{lambda_path}/{datetime.now().isoformat()}.zip'
+            self._code_path = f'lambda/code/{lambda_path}'
+            self._code_key = f'{self._code_path}/{datetime.now().isoformat()}.zip'
             self._deploy_service(service)
 
     def _deploy_service(self, service: ff.Service):
@@ -372,6 +374,24 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                 Key=self._code_key
             )
         os.chdir('..')
+
+        self._clean_up_old_artifacts(context)
+
+    def _clean_up_old_artifacts(self, context: ff.Context):
+        response = self._s3_client.list_objects(
+            Bucket=self._bucket,
+            Prefix=self._code_path
+        )
+
+        files = []
+        for row in response['Contents']:
+            files.append((row['Key'], row['LastModified']))
+        if len(files) < 3:
+            return
+
+        files.sort(key=lambda i: i[1], reverse=True)
+        for key, _ in files[2:]:
+            self._s3_client.delete_object(Bucket=self._bucket, Key=key)
 
     def _create_project_stack(self):
         update = True
