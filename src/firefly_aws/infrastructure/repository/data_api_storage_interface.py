@@ -23,6 +23,7 @@ import firefly as ff
 import firefly.infrastructure as ffi
 import firefly_aws.domain as domain
 from botocore.exceptions import ClientError
+from firefly import domain as ffd
 
 
 class DataApiStorageInterface(ffi.DbApiStorageInterface):
@@ -229,9 +230,6 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface):
     def _ensure_connected(self):
         return True
 
-    def _ensure_table_created(self, entity: Type[ff.Entity]):
-        self._exec(self._generate_create_table(entity), [])
-
     def _generate_where_clause(self, criteria: ff.BinaryOp):
         if criteria is None:
             return '', []
@@ -241,3 +239,8 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface):
         for k, v in params.items():
             ret.append(self._generate_param_entry(k, type(v), v))
         return f'where {clause}', ret
+
+    def _execute_ddl(self, entity: Type[ffd.Entity]):
+        sql = f"create database if not exists {entity.get_class_context()};"
+        sql += self._generate_create_table(entity)
+        self._exec(sql, [])

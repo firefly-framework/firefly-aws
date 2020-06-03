@@ -45,6 +45,7 @@ from pprint import pprint
 from time import sleep
 
 import firefly as ff
+import firefly.infrastructure as ffi
 import inflection
 import yaml
 from botocore.exceptions import ClientError
@@ -307,7 +308,19 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             else:
                 raise e
 
+        self._execute_ddl(context)
+
         self.info('Done')
+
+    def _execute_ddl(self, context: ff.Context):
+        for entity in context.entities:
+            if issubclass(entity, ff.AggregateRoot) and entity is not ff.AggregateRoot:
+                try:
+                    repository = self._registry(entity)
+                    if isinstance(repository, ffi.DbApiRepository):
+                        repository.execute_ddl()
+                except ff.FrameworkError:
+                    self.debug('Could not execute ddl for entity %s', entity)
 
     def _find_or_create_topic(self, context_name: str):
         arn = f'arn:aws:sns:{self._region}:{self._account_id}:{self._topic_name(context_name)}'
