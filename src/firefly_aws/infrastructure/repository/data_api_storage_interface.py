@@ -247,7 +247,6 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
 
         ret = []
         while True:
-            print(f'{sql} limit {limit} offset {offset}')
             try:
                 result = ff.retry(
                     lambda: self._exec(f'{sql} limit {limit} offset {offset}', params),
