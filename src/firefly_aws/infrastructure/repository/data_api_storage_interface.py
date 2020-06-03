@@ -241,6 +241,5 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface):
         return f'where {clause}', ret
 
     def _execute_ddl(self, entity: Type[ffd.Entity]):
-        sql = f"create database if not exists {entity.get_class_context()};"
-        sql += self._generate_create_table(entity)
-        self._exec(sql, [])
+        self._exec(f"create database if not exists {entity.get_class_context()}", [])
+        self._exec(self._generate_create_table(entity), [])
