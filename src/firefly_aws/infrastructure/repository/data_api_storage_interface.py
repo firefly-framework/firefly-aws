@@ -239,6 +239,30 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
         self._exec(f"create database if not exists {entity.get_class_context()}", [])
         self._exec(self._generate_create_table(entity), [])
 
+        table_indexes = self._get_table_indexes(entity)
+        indexes = self._get_indexes(entity)
+        index_names = [f.name for f in indexes]
+
+        for table_index in table_indexes:
+            if table_index not in index_names:
+                self._drop_table_index(entity, table_index)
+
+        for index in index_names:
+            if index not in table_indexes:
+                self._add_table_index(entity, list(filter(lambda f: f.name == index, indexes))[0])
+
+    @abstractmethod
+    def _get_table_indexes(self, entity: Type[ffd.Entity]):
+        pass
+
+    @abstractmethod
+    def _add_table_index(self, entity: Type[ffd.Entity], field_):
+        pass
+
+    @abstractmethod
+    def _drop_table_index(self, entity: Type[ffd.Entity], name: str):
+        pass
+
     def _paginate(self, sql: str, params: list, entity: Type[ff.Entity]):
         if entity.__name__ not in self._select_limits:
             self._select_limits[entity.__name__] = self._get_average_row_size(entity)

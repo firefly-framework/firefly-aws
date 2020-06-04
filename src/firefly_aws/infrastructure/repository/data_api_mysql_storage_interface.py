@@ -18,6 +18,7 @@ from math import ceil
 from typing import Type
 
 import firefly as ff
+from firefly import domain as ffd
 
 from .data_api_storage_interface import DataApiStorageInterface
 
@@ -31,3 +32,32 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
             lambda: self._exec(f"select CEIL(AVG(LENGTH(obj))) from {self._fqtn(entity)}", [])
         )
         return result['records'][0][0]['longValue'] / 1024
+
+    def _get_table_indexes(self, entity: Type[ffd.Entity]):
+        schema, table = self._fqtn(entity).split('.')
+        sql = f"""
+            select COLUMN_NAME
+            from information_schema.STATISTICS
+            where TABLE_NAME = '{table}'
+            and TABLE_SCHEMA = '{schema}'
+            and INDEX_NAME != 'PRIMARY'
+        """
+        result = ff.retry(
+            lambda: self._exec(sql, [])
+        )
+
+        ret = []
+        for row in result['records']:
+            ret.append(row[0]['stringValue'])
+
+        return ret
+
+    def _add_table_index(self, entity: Type[ffd.Entity], field_):
+        ff.retry(lambda: self._exec(
+            f"alter table {self._fqtn(entity)} add column `{field_.name}` {self._db_type(field_)}", []
+        ))
+        ff.retry(lambda: self._exec(f"create index `idx_{field_.name}` on {self._fqtn(entity)} (`{field_.name}`)", []))
+
+    def _drop_table_index(self, entity: Type[ffd.Entity], name: str):
+        ff.retry(lambda: self._exec(f"drop index `idx_{name}` on {self._fqtn(entity)}", []))
+        ff.retry(lambda: self._exec(f"alter table {self._fqtn(entity)} drop column `{name}`", []))
