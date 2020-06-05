@@ -116,13 +116,10 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
         for record in event['Records']:
             body = self._serializer.deserialize(record['body'])
             message: Union[ff.Event, dict] = self._serializer.deserialize(body['Message'])
-            print(message)
-            print('===')
 
             if isinstance(message, dict) and 'PAYLOAD_KEY' in message:
                 try:
                     message = self.load_payload(message['PAYLOAD_KEY'])
-                    print(message)
                 except Exception as e:
                     self.nack_message(record)
                     self.error(e)
@@ -139,12 +136,11 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
             self.complete_batch_handshake(event['Records'])
 
     def load_payload(self, key: str):
-        return self._serializer.deserialize(
-            self._s3_client.get_object(
-                Bucket=self._bucket,
-                Key=key
-            )
+        response = self._s3_client.get_object(
+            Bucket=self._bucket,
+            Key=key
         )
+        return self._serializer.deserialize(response['Body'].read())
 
     def nack_message(self, record: dict):
         pass
