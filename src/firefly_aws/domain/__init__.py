@@ -53,7 +53,7 @@ class ResourceNameAware(ABC):
         return f'{self._service_name(context)}Stack'
 
     def _subscription_name(self, queue_context: str, topic_context: str = ''):
-        slug = f'{self._project}_{self._env}_{queue_context}_{topic_context}'
+        slug = f'{self._project}_{self._env}_{queue_context}_{topic_context}'.rstrip('_')
         return f'{inflection.camelize(inflection.underscore(slug))}Subscription'
 
     def _rest_api_name(self):
