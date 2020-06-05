@@ -17,6 +17,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+from pprint import pprint
 from typing import Union
 
 import firefly as ff
@@ -112,6 +113,7 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
         return response
 
     def _handle_sqs_event(self, event: dict):
+        pprint(event)
         for record in event['Records']:
             body = self._serializer.deserialize(record['body'])
             self.debug('body: %s', body)
