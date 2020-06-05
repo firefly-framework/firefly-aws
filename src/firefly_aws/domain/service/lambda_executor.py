@@ -128,6 +128,7 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
                 self.info('Got a null message')
                 return
 
+            message.headers['external'] = True
             self.dispatch(message)
         if len(event['Records']) == 1:
             self.complete_handshake(event['Records'][0])
