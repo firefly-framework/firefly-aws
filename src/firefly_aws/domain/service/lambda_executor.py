@@ -113,15 +113,16 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
         return response
 
     def _handle_sqs_event(self, event: dict):
-        pprint(event)
         for record in event['Records']:
             body = self._serializer.deserialize(record['body'])
-            self.debug('body: %s', body)
             message: Union[ff.Event, dict] = self._serializer.deserialize(body['Message'])
+            print(message)
+            print('===')
 
             if isinstance(message, dict) and 'PAYLOAD_KEY' in message:
                 try:
                     message = self.load_payload(message['PAYLOAD_KEY'])
+                    print(message)
                 except Exception as e:
                     self.nack_message(record)
                     self.error(e)
