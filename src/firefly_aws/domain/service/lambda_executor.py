@@ -110,7 +110,13 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
     def _handle_http_response(self, response: any):
         if isinstance(response, (dict, list)):
             return json.loads(self._serializer.serialize(response))
-        return response
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': response,
+        }
 
     def _handle_sqs_event(self, event: dict):
         for record in event['Records']:
