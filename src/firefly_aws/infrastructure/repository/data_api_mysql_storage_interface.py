@@ -31,7 +31,10 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
         result = ff.retry(
             lambda: self._exec(f"select CEIL(AVG(LENGTH(obj))) from {self._fqtn(entity)}", [])
         )
-        return result['records'][0][0]['longValue'] / 1024
+        try:
+            return result['records'][0][0]['longValue'] / 1024
+        except KeyError:
+            return 1
 
     def _get_table_indexes(self, entity: Type[ffd.Entity]):
         schema, table = self._fqtn(entity).split('.')
