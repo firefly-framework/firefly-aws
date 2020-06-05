@@ -113,10 +113,7 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
 
     def _handle_sqs_event(self, event: dict):
         for record in event['Records']:
-            if isinstance(record['body'], (str, bytes, bytearray)):
-                body = self._serializer.deserialize(record['body'])
-            else:
-                body = record['body']
+            body = self._serializer.deserialize(record['body'])
             self.debug('body: %s', body)
             message: Union[ff.Event, dict] = self._serializer.deserialize(body['Message'])
 
