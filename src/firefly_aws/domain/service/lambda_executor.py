@@ -48,7 +48,17 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
             return self.request(message)
 
     def _handle_http_event(self, event: dict):
-        body = self._serializer.deserialize(event['body']) if 'body' in event else None
+        body = None
+        if 'body' in event:
+            for k, v in event['headers'].items():
+                if k.lower() == 'content-type':
+                    if v.lower() == 'application/json':
+                        body = self._serializer.deserialize(event['body'])
+                    else:
+                        body = event['body']
+            if body is None:
+                body = self._serializer.deserialize(event['body'])
+
         route = self._version_matcher.sub('', event['rawPath'])
         method = event['requestContext']['http']['method']
 
@@ -83,7 +93,10 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
                     return self._handle_http_response(self.request(message_name, data=params))
                 else:
                     if body is not None:
-                        params.update(body)
+                        if isinstance(body, dict):
+                            params.update(body)
+                        else:
+                            params['body'] = body
                     return self._handle_http_response(self.invoke(message_name, params))
             except ff.UnauthenticatedError:
                 return {'statusCode': 403}
