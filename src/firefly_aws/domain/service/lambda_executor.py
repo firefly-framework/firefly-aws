@@ -100,15 +100,17 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
                             params['body'] = body
                     return self._handle_http_response(self.invoke(message_name, params))
             except ff.UnauthenticatedError:
+                self.info('Unauthenticated')
                 return {'statusCode': 403}
             except ff.UnauthorizedError:
+                self.info('Unauthorized')
                 return {'statusCode': 401}
 
         except TypeError:
             pass
 
     def _handle_http_response(self, response: any):
-        return {
+        ret = {
             'statusCode': 200,
             'headers': {
                 'Access-Control-Allow-Origin': '*',
@@ -116,6 +118,8 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
             'body': self._serializer.serialize(response),
             'isBase64Encoded': False,
         }
+        self.info(f'Proxy Response: %s', ret)
+        return ret
 
     def _handle_sqs_event(self, event: dict):
         for record in event['Records']:
