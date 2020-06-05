@@ -109,7 +109,7 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
 
     def _handle_http_response(self, response: any):
         if isinstance(response, (dict, list)):
-            return json.loads(self._serializer.serialize(response))
+            response = json.loads(self._serializer.serialize(response))
         return {
             'statusCode': 200,
             'headers': {
