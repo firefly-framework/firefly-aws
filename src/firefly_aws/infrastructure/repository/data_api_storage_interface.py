@@ -301,3 +301,14 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
         :return:
         """
         pass
+
+    def _exec(self, sql: str, params: list):
+        self.debug(sql)
+        self.debug(params)
+        return self._rds_data_client.execute_statement(
+            resourceArn=self._db_arn,
+            secretArn=self._db_secret_arn,
+            database=self._db_name,
+            sql=sql,
+            parameters=params
+        )
