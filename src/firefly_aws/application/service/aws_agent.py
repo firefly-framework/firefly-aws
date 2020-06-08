@@ -53,6 +53,7 @@ from firefly_aws import S3Service, ResourceNameAware
 from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join
 from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route
 from troposphere.awslambda import Function, Code, VPCConfig, Environment, Permission, EventSourceMapping
+from troposphere.cloudwatch import Alarm, MetricDimension
 from troposphere.constants import NUMBER
 from troposphere.iam import Role, Policy
 from troposphere.s3 import Bucket, LifecycleRule, LifecycleConfiguration
@@ -82,6 +83,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
 
         self._project = self._configuration.all.get('project')
         aws_config = self._configuration.contexts.get('firefly_aws')
+        self._aws_config = aws_config
         self._region = aws_config.get('region')
         self._security_group_ids = aws_config.get('vpc', {}).get('security_group_ids')
         self._subnet_ids = aws_config.get('vpc', {}).get('subnet_ids')
@@ -221,6 +223,27 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             Target=Join('/', ['integrations', Ref(integration)]),
             DependsOn=integration
         ))
+
+        # Error alarms / subscriptions
+
+        if 'errors' in self._aws_config:
+            alerts_topic = template.add_resource(Topic(
+                self._alert_topic_name(service.name),
+                TopicName=self._alert_topic_name(service.name)
+            ))
+            self._add_error_alarm(template, f'{self._service_name(context.name)}Sync', context.name, alerts_topic)
+            self._add_error_alarm(template, f'{self._service_name(context.name)}Async', context.name, alerts_topic)
+
+            if 'email' in self._aws_config.get('errors'):
+                template.add_resource(SubscriptionResource(
+                    self._alarm_subscription_name(context.name),
+                    Protocol='email',
+                    Endpoint=self._aws_config.get('errors').get('email').get('recipients'),
+                    TopicArn=self._alert_topic_arn(context.name),
+                    DependsOn=[alerts_topic]
+                ))
+
+        # Queues / Topics
 
         subscriptions = {}
         for subscription in self._get_subscriptions(context):
@@ -521,6 +544,21 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             self._update_stack(self._stack_name(), template)
         else:
             self._create_stack(self._stack_name(), template)
+
+    def _add_error_alarm(self, template, function_name: str, context: str, topic):
+        template.add_resource(Alarm(
+            f'{function_name}ErrorAlarm',
+            AlarmActions=[self._alert_topic_arn(context)],
+            ComparisonOperator='GreaterThanThreshold',
+            EvaluationPeriods=1,
+            MetricName='Errors',
+            Namespace='AWS/Lambda',
+            Dimensions=[MetricDimension(Name='FunctionName', Value=function_name)],
+            Period=60,
+            Statistic='Sum',
+            Threshold=0,
+            DependsOn=[topic]
+        ))
 
     def _add_role(self, role_name: str, template):
         return template.add_resource(Role(

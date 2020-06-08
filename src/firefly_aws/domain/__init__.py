@@ -29,9 +29,7 @@ class ResourceNameAware(ABC):
     _account_id: str = None
 
     def _service_name(self, context: str = ''):
-        slug = f'{self._project}_{self._env}_{context}'
-        if slug.endswith('_'):
-            slug = slug.rstrip('_')
+        slug = f'{self._project}_{self._env}_{context}'.rstrip('_')
         return f'{inflection.camelize(inflection.underscore(slug))}'
 
     def _lambda_resource_name(self, name: str):
@@ -56,6 +54,10 @@ class ResourceNameAware(ABC):
         slug = f'{self._project}_{self._env}_{queue_context}_{topic_context}'.rstrip('_')
         return f'{inflection.camelize(inflection.underscore(slug))}Subscription'
 
+    def _alarm_subscription_name(self, context: str):
+        slug = f'{self._project}_{self._env}_{context}'
+        return f'{inflection.camelize(inflection.underscore(slug))}AlertsSubscription'
+
     def _rest_api_name(self):
         slug = f'{self._project}_{self._env}'
         return f'{inflection.camelize(inflection.underscore(slug))}Api'
@@ -65,3 +67,9 @@ class ResourceNameAware(ABC):
 
     def _topic_arn(self, context_name: str):
         return f'arn:aws:sns:{self._region}:{self._account_id}:{self._topic_name(context_name)}'
+
+    def _alert_topic_name(self, context: str):
+        return f'{self._service_name(context)}FireflyAlerts'
+
+    def _alert_topic_arn(self, context: str):
+        return f'arn:aws:sns:{self._region}:{self._account_id}:{self._alert_topic_name(context)}'
