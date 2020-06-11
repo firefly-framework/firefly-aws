@@ -577,6 +577,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                             },
                             {
                                 'Action': [
+                                    'cloudfront:CreateInvalidation',
                                     'ec2:*NetworkInterface',
                                     'ec2:DescribeNetworkInterfaces',
                                     'lambda:InvokeFunction',
