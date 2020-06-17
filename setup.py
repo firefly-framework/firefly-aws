@@ -7,8 +7,8 @@ with open("README.md", "r") as fh:
 
 
 setuptools.setup(
-    name='firefly_aws',
-    version='0.1',
+    name='firefly-aws',
+    version='0.1.0',
     author="",
     author_email="",
     description="Put project description here.",

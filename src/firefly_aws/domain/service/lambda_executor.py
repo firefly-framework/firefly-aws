@@ -23,6 +23,15 @@ from typing import Union
 import firefly as ff
 
 
+STATUS_CODES = {
+    'BadRequest': 400,
+    'Unauthorized': 401,
+    'Forbidden': 403,
+    'NotFound': 404,
+    'ApiError': 500,
+}
+
+
 class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
     _serializer: ff.Serializer = None
     _message_factory: ff.MessageFactory = None
@@ -105,16 +114,20 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
             except ff.UnauthorizedError:
                 self.info('Unauthorized')
                 return {'statusCode': 401}
+            except ff.ApiError as e:
+                return self._handle_http_response(None, status_code=STATUS_CODES[e.__class__.__name__])
 
         except TypeError:
             pass
 
-    def _handle_http_response(self, response: any):
+    def _handle_http_response(self, response: any, status_code: int = 200, headers: dict = None):
+        headers = headers or {}
+        headers.update({
+            'Access-Control-Allow-Origin': '*',
+        })
         ret = {
-            'statusCode': 200,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-            },
+            'statusCode': status_code,
+            'headers': headers,
             'body': self._serializer.serialize(response),
             'isBase64Encoded': False,
         }

@@ -394,9 +394,9 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         with open('firefly.yml', 'w') as fp:
             fp.write(yaml.dump(self._configuration.all))
 
-        subprocess.call(['find', '.', '-name', '*.so', '|', 'xargs', 'strip'])
-        subprocess.call(['find', '.', '-name', '*.so.*', '|', 'xargs', 'strip'])
-        subprocess.call(['find', '.', '-name', '*.pyc', '-delete'])
+        subprocess.call(['find', '.', '-name', '"*.so"', '|', 'xargs', 'strip'])
+        subprocess.call(['find', '.', '-name', '"*.so.*"', '|', 'xargs', 'strip'])
+        subprocess.call(['find', '.', '-name', '"*.pyc"', '-delete'])
         file_name = self._code_key.split('/')[-1]
         subprocess.call(['zip', '-r', f'../{file_name}', '.'])
         os.chdir('..')
@@ -634,7 +634,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             status = self._cloudformation_client.describe_stacks(StackName=stack_name)['Stacks'][0]
 
     def _lambda_environment(self, context: ff.Context):
-        env = context.config.get('extensions', {}).get('firefly_aws', {}).get('environment')
+        env = ((context.config.get('extensions') or {}).get('firefly_aws') or {}).get('environment')
 
         defaults = {
             'PROJECT': self._project,
