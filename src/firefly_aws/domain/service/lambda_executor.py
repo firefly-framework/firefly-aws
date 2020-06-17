@@ -115,7 +115,7 @@ class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
                 self.info('Unauthorized')
                 return {'statusCode': 401}
             except ff.ApiError as e:
-                return self._handle_http_response(None, status_code=STATUS_CODES[e.__class__.__name__])
+                return self._handle_http_response(str(e), status_code=STATUS_CODES[e.__class__.__name__])
 
         except TypeError:
             pass
