@@ -32,7 +32,7 @@ STATUS_CODES = {
 }
 
 
-class LambdaExecutor(ff.DomainService, ff.SystemBusAware, ff.LoggerAware):
+class LambdaExecutor(ff.DomainService):
     _serializer: ff.Serializer = None
     _message_factory: ff.MessageFactory = None
     _rest_router: ff.RestRouter = None
