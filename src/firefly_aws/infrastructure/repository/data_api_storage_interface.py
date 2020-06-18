@@ -54,7 +54,7 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
         except domain.DocumentTooLarge:
             self._insert_large_document(entity)
 
-    def _all(self, entity_type: Type[ff.Entity], criteria: ff.BinaryOp = None, limit: int = None, raw: bool = False):
+    def _all(self, entity_type: Type[ff.Entity], criteria: ff.BinaryOp = None, limit: int = None):
         sql = f"select obj from {self._fqtn(entity_type)}"
         params = []
         if criteria is not None:
@@ -65,10 +65,10 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
             sql += f" limit {limit}"
 
         try:
-            return self._paginate(sql, params, entity_type, raw=raw)
+            return self._paginate(sql, params, entity_type)
         except ClientError as e:
             if 'Database returned more than the allowed response size limit' in str(e):
-                return self._fetch_multiple_large_documents(sql, params, entity_type, raw=raw)
+                return self._fetch_multiple_large_documents(sql, params, entity_type)
             raise e
 
     def _find(self, uuid: str, entity_type: Type[ff.Entity]):
@@ -123,7 +123,7 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
                 ]
                 ff.retry(lambda: self._exec(sql, params))
 
-    def _fetch_large_document(self, id_: str, entity: Type[ff.Entity], raw: bool = False):
+    def _fetch_large_document(self, id_: str, entity: Type[ff.Entity]):
         n = self._size_limit * 1024
         start = 1
         document = ''
@@ -137,14 +137,14 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
                 break
             start += n
 
-        return entity.from_dict(self._serializer.deserialize(document)) if not raw else document
+        return entity.from_dict(self._serializer.deserialize(document))
 
-    def _fetch_multiple_large_documents(self, sql: str, params: list, entity: Type[ff.Entity], raw: bool = False):
+    def _fetch_multiple_large_documents(self, sql: str, params: list, entity: Type[ff.Entity]):
         ret = []
         sql = sql.replace('select obj', 'select id')
         result = ff.retry(lambda: self._exec(sql, params))
         for row in result['records']:
-            ret.append(self._fetch_large_document(row[0]['stringValue'], entity, raw=raw))
+            ret.append(self._fetch_large_document(row[0]['stringValue'], entity))
         return ret
 
     def _generate_insert(self, entity: ff.Entity, part: str = None):
@@ -262,7 +262,7 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
         result = ff.retry(lambda: self._exec(count_sql, params))
         return result['records'][0][0]['longValue']
 
-    def _paginate(self, sql: str, params: list, entity: Type[ff.Entity], raw: bool = False):
+    def _paginate(self, sql: str, params: list, entity: Type[ff.Entity]):
         if entity.__name__ not in self._select_limits:
             self._select_limits[entity.__name__] = self._get_average_row_size(entity)
         limit = floor(self._size_limit / self._select_limits[entity.__name__])
@@ -271,14 +271,14 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
 
         query_params = []
         for i in range(queries):
-            query_params.append((sql, params, limit, limit * i, entity, raw))
+            query_params.append((sql, params, limit, limit * i))
         pool = multiprocessing.pool.ThreadPool(processes=queries)
         results = pool.starmap(self._load_query_results, query_params)
 
-        return list(itertools.chain.from_iterable(results))
+        results = list(itertools.chain.from_iterable(results))
+        return list(map(lambda e: entity.from_dict(self._serializer.deserialize(e)), results))
 
-    def _load_query_results(self, sql: str, params: list, limit: int, offset: int, entity: Type[ff.Entity],
-                            raw: bool = False):
+    def _load_query_results(self, sql: str, params: list, limit: int, offset: int):
         ret = []
         result = ff.retry(
             lambda: self._exec(f'{sql} limit {limit} offset {offset}', params),
@@ -287,12 +287,7 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
         )
 
         for row in result['records']:
-            if raw:
-                ret.append(row[0]['stringValue'])
-            else:
-                obj = self._serializer.deserialize(row[0]['stringValue'])
-                ret.append(entity.from_dict(obj))
-        offset += limit
+            ret.append(row[0]['stringValue'])
 
         return ret
 
