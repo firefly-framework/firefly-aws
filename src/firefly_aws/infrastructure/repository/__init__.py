@@ -12,6 +12,7 @@
 #  You should have received a copy of the GNU General Public License along with Firefly. If not, see
 #  <http://www.gnu.org/licenses/>.
 
+from .data_api_mysql_mapped_storage_interface import DataApiMysqlMappedStorageInterface
 from .data_api_mysql_storage_interface import DataApiMysqlStorageInterface
 from .s3_connection_factory import S3ConnectionFactory
 from .s3_repository import S3Repository

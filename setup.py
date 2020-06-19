@@ -20,6 +20,7 @@ setuptools.setup(
     install_requires=[
         'boto3>=1.12.42',
         'cognitojwt>=1.2.2',
+        'dateparser>=0.7.4',
         'firefly-dependency-injection>=0.1',
         'requests>=2.23.0',
         'troposphere>=2.6.1',

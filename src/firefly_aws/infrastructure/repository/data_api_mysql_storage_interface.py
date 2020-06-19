@@ -14,10 +14,11 @@
 
 from __future__ import annotations
 
-from math import ceil
 from typing import Type
 
 import firefly as ff
+import firefly_aws.domain as domain
+from botocore.exceptions import ClientError
 from firefly import domain as ffd
 
 from .data_api_storage_interface import DataApiStorageInterface
@@ -26,6 +27,50 @@ from .data_api_storage_interface import DataApiStorageInterface
 class DataApiMysqlStorageInterface(DataApiStorageInterface):
     def __init__(self):
         super().__init__()
+
+    def _add(self, entity: ff.Entity):
+        try:
+            super()._add(entity)
+        except domain.DocumentTooLarge:
+            self._insert_large_document(entity)
+
+    def _update(self, entity: ff.Entity):
+        try:
+            super()._update(entity)
+        except domain.DocumentTooLarge:
+            self._insert_large_document(entity, update=True)
+
+    def _find(self, uuid: str, entity_type: Type[ff.Entity]):
+        try:
+            super()._find(uuid, entity_type)
+        except ClientError as e:
+            if 'Database returned more than the allowed response size limit' in str(e):
+                return self._fetch_large_document(uuid, entity_type)
+            raise e
+
+    def _all(self, entity_type: Type[ff.Entity], criteria: ff.BinaryOp = None, limit: int = None):
+        try:
+            indexes = self.get_indexes(entity_type)
+            pruned_criteria = criteria.prune(indexes)
+
+            entities = super()._all(entity_type, pruned_criteria, limit)
+            if criteria != pruned_criteria:
+                entities = list(filter(lambda ee: criteria.matches(ee), entities))
+
+            return entities
+        except ClientError as e:
+            if 'Database returned more than the allowed response size limit' in str(e):
+                sql = f"select {self._generate_select_list(entity_type)} from {self._fqtn(entity_type)}"
+                params = []
+                if criteria is not None:
+                    clause, params = self._generate_where_clause(criteria)
+                    sql = f'{sql} {clause}'
+
+                if limit is not None:
+                    sql += f" limit {limit}"
+
+                return self._fetch_multiple_large_documents(sql, params, entity_type)
+            raise e
 
     def _get_average_row_size(self, entity: Type[ff.Entity]):
         result = ff.retry(
@@ -64,3 +109,118 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
     def _drop_table_index(self, entity: Type[ffd.Entity], name: str):
         ff.retry(lambda: self._exec(f"drop index `idx_{name}` on {self._fqtn(entity)}", []))
         ff.retry(lambda: self._exec(f"alter table {self._fqtn(entity)} drop column `{name}`", []))
+
+    def _generate_column_list(self, entity: Type[ffd.Entity]):
+        values = ['id', 'obj']
+        for index in self.get_indexes(entity):
+            values.append(index.name)
+        return ','.join(values)
+
+    def _generate_value_list(self, entity: Type[ffd.Entity]):
+        placeholders = [':id', ':obj']
+        for index in self.get_indexes(entity):
+            placeholders.append(f':{index.name}')
+        return ','.join(placeholders)
+
+    def _generate_parameters(self, entity: ff.Entity, part: str = None):
+        if part is None:
+            obj = self._serializer.serialize(entity)
+            if (len(obj) / 1024) >= self._size_limit:
+                raise domain.DocumentTooLarge()
+        else:
+            obj = part
+
+        params = [
+            {'name': 'id', 'value': {'stringValue': entity.id_value()}},
+            {'name': 'obj', 'value': {'stringValue': obj}},
+        ]
+        for field_ in self._get_indexes(entity.__class__):
+            params.append(self._generate_param_entry(field_.name, field_.type, getattr(entity, field_.name)))
+        return params
+
+    def _generate_update_list(self, entity: Type[ffd.Entity]):
+        values = ['obj=:obj']
+        for index in self.get_indexes(entity):
+            values.append(f'`{index.name}`=:{index.name}')
+        return ','.join(values)
+
+    def _insert_large_document(self, entity: ff.Entity, update: bool = False):
+        obj = self._serializer.serialize(entity)
+        n = self._size_limit * 1024
+        first = True
+        for chunk in [obj[i:i+n] for i in range(0, len(obj), n)]:
+            if first:
+                if update:
+                    ff.retry(lambda: self._exec(*self._generate_update(entity, part=chunk)))
+                else:
+                    ff.retry(lambda: self._exec(*self._generate_insert(entity, part=chunk)))
+                first = False
+            else:
+                sql = f"update {self._fqtn(entity.__class__)} set obj = CONCAT(obj, :str) where id = :id"
+                params = [
+                    {'name': 'id', 'value': {'stringValue': entity.id_value()}},
+                    {'name': 'str', 'value': {'stringValue': chunk}},
+                ]
+                ff.retry(lambda: self._exec(sql, params))
+
+    def _fetch_large_document(self, id_: str, entity: Type[ff.Entity]):
+        n = self._size_limit * 1024
+        start = 1
+        document = ''
+        while True:
+            sql = f"select SUBSTR(obj, {start}, {n}) as obj from {self._fqtn(entity)} where id = :id"
+            params = [{'name': 'id', 'value': {'stringValue': id_}}]
+            # result = ff.retry(self._exec(sql, params))
+            result = self._exec(sql, params)
+            document += result['records'][0][0]['stringValue']
+            if len(result['records'][0][0]['stringValue']) < n:
+                break
+            start += n
+
+        return entity.from_dict(self._serializer.deserialize(document))
+
+    def _fetch_multiple_large_documents(self, sql: str, params: list, entity: Type[ff.Entity]):
+        ret = []
+        sql = sql.replace('select obj', 'select id')
+        result = ff.retry(lambda: self._exec(sql, params))
+        for row in result['records']:
+            ret.append(self._fetch_large_document(row[0]['stringValue'], entity))
+        return ret
+
+    def _build_entity(self, entity: Type[ffd.Entity], data, raw: bool = False):
+        return entity.from_dict(self._serializer.deserialize(data[0]['stringValue']))
+
+    def _generate_select_list(self, entity: Type[ffd.Entity]):
+        return 'obj'
+
+    def _generate_create_table(self, entity: Type[ffd.Entity]):
+        columns = []
+        indexes = []
+        for i in self.get_indexes(entity):
+            indexes.append(self._generate_index(i.name))
+            if i.type == 'float':
+                columns.append(f"`{i.name}` float")
+            elif i.type == 'int':
+                columns.append(f"`{i.name}` integer")
+            elif i.type == 'datetime':
+                columns.append(self._datetime_declaration(i.name))
+            else:
+                length = i.metadata['length'] if 'length' in i.metadata else 256
+                columns.append(f"`{i.name}` varchar({length})")
+        extra = ''
+        if len(columns) > 0:
+            self._generate_extra(columns, indexes)
+            extra = self._generate_extra(columns, indexes)
+
+        sql = f"""
+            create table if not exists {self._fqtn(entity)} (
+                id varchar(40)
+                , obj longtext not null
+                {extra}
+                , primary key(id)
+            )
+        """
+        return sql
+
+    def raw(self, entity: Type[ffd.Entity], criteria: ffd.BinaryOp = None, limit: int = None):
+        raise NotImplementedError('You cannot call raw() on data api interfaces')

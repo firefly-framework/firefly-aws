@@ -15,23 +15,19 @@
 from __future__ import annotations
 
 import itertools
+import multiprocessing.pool
 from abc import ABC, abstractmethod
 from dataclasses import fields
 from datetime import datetime
 from math import floor, ceil
-from threading import Thread
 from typing import Type
 
-import concurrent.futures
-import multiprocessing.pool
 import firefly as ff
 import firefly.infrastructure as ffi
-import firefly_aws.domain as domain
-from botocore.exceptions import ClientError
 from firefly import domain as ffd
 
 
-class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
+class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
     _cache: dict = None
     _rds_data_client = None
     _serializer: ffi.JsonSerializer = None
@@ -48,14 +44,11 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
         pass
 
     def _add(self, entity: ff.Entity):
-        try:
-            sql, params = self._generate_insert(entity)
-            ff.retry(lambda: self._exec(sql, params))
-        except domain.DocumentTooLarge:
-            self._insert_large_document(entity)
+        sql, params = self._generate_insert(entity)
+        ff.retry(lambda: self._exec(sql, params))
 
     def _all(self, entity_type: Type[ff.Entity], criteria: ff.BinaryOp = None, limit: int = None):
-        sql = f"select obj from {self._fqtn(entity_type)}"
+        sql = f"select {self._generate_select_list(entity_type)} from {self._fqtn(entity_type)}"
         params = []
         if criteria is not None:
             clause, params = self._generate_where_clause(criteria)
@@ -64,31 +57,19 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
         if limit is not None:
             sql += f" limit {limit}"
 
-        try:
-            return self._paginate(sql, params, entity_type)
-        except ClientError as e:
-            if 'Database returned more than the allowed response size limit' in str(e):
-                return self._fetch_multiple_large_documents(sql, params, entity_type)
-            raise e
+        return self._paginate(sql, params, entity_type)
 
     def _find(self, uuid: str, entity_type: Type[ff.Entity]):
-        sql = f"select obj from {self._fqtn(entity_type)} where id = :id"
-        params = [
-            {'name': 'id', 'value': {'stringValue': uuid}},
-        ]
-        try:
-            result = ff.retry(
-                lambda: self._exec(sql, params),
-                should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
-            )
-            if len(result['records']) == 0:
-                return None
-            obj = self._serializer.deserialize(result['records'][0][0]['stringValue'])
-            return entity_type.from_dict(obj)
-        except ClientError as e:
-            if 'Database returned more than the allowed response size limit' in str(e):
-                return self._fetch_large_document(uuid, entity_type)
-            raise e
+        sql = f"select {self._generate_select_list(entity_type)} from {self._fqtn(entity_type)} where id = :id"
+        params = [{'name': 'id', 'value': {'stringValue': uuid}}]
+        result = ff.retry(
+            lambda: self._exec(sql, params),
+            should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
+        )
+        if len(result['records']) == 0:
+            return None
+
+        return self._build_entity(entity_type, result['records'][0])
 
     def _remove(self, entity: ff.Entity):
         sql = f"delete from {self._fqtn(entity.__class__)} where id = :id"
@@ -98,54 +79,8 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
         ff.retry(self._exec(sql, params))
 
     def _update(self, entity: ff.Entity):
-        try:
-            sql, params = self._generate_update(entity)
-            ff.retry(lambda: self._exec(sql, params))
-        except domain.DocumentTooLarge:
-            self._insert_large_document(entity, update=True)
-
-    def _insert_large_document(self, entity: ff.Entity, update: bool = False):
-        obj = self._serializer.serialize(entity)
-        n = self._size_limit * 1024
-        first = True
-        for chunk in [obj[i:i+n] for i in range(0, len(obj), n)]:
-            if first:
-                if update:
-                    ff.retry(lambda: self._exec(*self._generate_update(entity, part=chunk)))
-                else:
-                    ff.retry(lambda: self._exec(*self._generate_insert(entity, part=chunk)))
-                first = False
-            else:
-                sql = f"update {self._fqtn(entity.__class__)} set obj = CONCAT(obj, :str) where id = :id"
-                params = [
-                    {'name': 'id', 'value': {'stringValue': entity.id_value()}},
-                    {'name': 'str', 'value': {'stringValue': chunk}},
-                ]
-                ff.retry(lambda: self._exec(sql, params))
-
-    def _fetch_large_document(self, id_: str, entity: Type[ff.Entity]):
-        n = self._size_limit * 1024
-        start = 1
-        document = ''
-        while True:
-            sql = f"select SUBSTR(obj, {start}, {n}) as obj from {self._fqtn(entity)} where id = :id"
-            params = [{'name': 'id', 'value': {'stringValue': id_}}]
-            # result = ff.retry(self._exec(sql, params))
-            result = self._exec(sql, params)
-            document += result['records'][0][0]['stringValue']
-            if len(result['records'][0][0]['stringValue']) < n:
-                break
-            start += n
-
-        return entity.from_dict(self._serializer.deserialize(document))
-
-    def _fetch_multiple_large_documents(self, sql: str, params: list, entity: Type[ff.Entity]):
-        ret = []
-        sql = sql.replace('select obj', 'select id')
-        result = ff.retry(lambda: self._exec(sql, params))
-        for row in result['records']:
-            ret.append(self._fetch_large_document(row[0]['stringValue'], entity))
-        return ret
+        sql, params = self._generate_update(entity)
+        ff.retry(lambda: self._exec(sql, params))
 
     def _generate_insert(self, entity: ff.Entity, part: str = None):
         t = entity.__class__
@@ -167,22 +102,6 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
         return self._cache['indexes'][entity]
 
     def _add_index_params(self, entity: ff.Entity, params: list):
-        for field_ in self._get_indexes(entity.__class__):
-            params.append(self._generate_param_entry(field_.name, field_.type, getattr(entity, field_.name)))
-        return params
-
-    def _generate_parameters(self, entity: ff.Entity, part: str = None):
-        if part is None:
-            obj = self._serializer.serialize(entity)
-            if (len(obj) / 1024) >= self._size_limit:
-                raise domain.DocumentTooLarge()
-        else:
-            obj = part
-
-        params = [
-            {'name': 'id', 'value': {'stringValue': entity.id_value()}},
-            {'name': 'obj', 'value': {'stringValue': obj}},
-        ]
         for field_ in self._get_indexes(entity.__class__):
             params.append(self._generate_param_entry(field_.name, field_.type, getattr(entity, field_.name)))
         return params
@@ -258,11 +177,11 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
         pass
 
     def _get_result_count(self, sql: str, params: list):
-        count_sql = sql.replace('select obj', 'select count(*)')
+        count_sql = f"select count(*) from ({sql}) a"
         result = ff.retry(lambda: self._exec(count_sql, params))
         return result['records'][0][0]['longValue']
 
-    def _paginate(self, sql: str, params: list, entity: Type[ff.Entity]):
+    def _paginate(self, sql: str, params: list, entity: Type[ff.Entity], raw: bool = False):
         if entity.__name__ not in self._select_limits:
             self._select_limits[entity.__name__] = self._get_average_row_size(entity)
         limit = floor(self._size_limit / self._select_limits[entity.__name__])
@@ -276,20 +195,14 @@ class DataApiStorageInterface(ffi.DbApiStorageInterface, ABC):
         results = pool.starmap(self._load_query_results, query_params)
 
         results = list(itertools.chain.from_iterable(results))
-        return list(map(lambda e: entity.from_dict(self._serializer.deserialize(e)), results))
+        return list(map(lambda d: self._build_entity(entity, d, raw=raw), results))
 
     def _load_query_results(self, sql: str, params: list, limit: int, offset: int):
-        ret = []
-        result = ff.retry(
+        return ff.retry(
             lambda: self._exec(f'{sql} limit {limit} offset {offset}', params),
             should_retry=lambda err: 'Database returned more than the allowed response size limit'
                                      not in str(err)
-        )
-
-        for row in result['records']:
-            ret.append(row[0]['stringValue'])
-
-        return ret
+        )['records']
 
     @abstractmethod
     def _get_average_row_size(self, entity: Type[ff.Entity]):

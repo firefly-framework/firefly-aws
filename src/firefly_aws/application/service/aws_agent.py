@@ -41,7 +41,6 @@ from __future__ import annotations
 import os
 import shutil
 from datetime import datetime
-from pprint import pprint
 from time import sleep
 
 import firefly as ff
@@ -339,7 +338,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             if issubclass(entity, ff.AggregateRoot) and entity is not ff.AggregateRoot:
                 try:
                     repository = self._registry(entity)
-                    if isinstance(repository, ffi.DbApiRepository):
+                    if isinstance(repository, ffi.RdbRepository):
                         repository.execute_ddl()
                 except ff.FrameworkError:
                     self.debug('Could not execute ddl for entity %s', entity)
