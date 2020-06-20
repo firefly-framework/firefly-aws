@@ -42,7 +42,7 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
 
     def _find(self, uuid: str, entity_type: Type[ff.Entity]):
         try:
-            super()._find(uuid, entity_type)
+            return super()._find(uuid, entity_type)
         except ClientError as e:
             if 'Database returned more than the allowed response size limit' in str(e):
                 return self._fetch_large_document(uuid, entity_type)
