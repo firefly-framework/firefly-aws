@@ -187,6 +187,8 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         limit = floor(self._size_limit / self._select_limits[entity.__name__])
         count = self._get_result_count(sql, params)
         queries = ceil(count / limit)
+        if queries < 1 or not queries:
+            queries = 1
 
         query_params = []
         for i in range(queries):
