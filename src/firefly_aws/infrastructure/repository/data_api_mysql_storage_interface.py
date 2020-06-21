@@ -50,7 +50,7 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
 
     def _all(self, entity_type: Type[ff.Entity], criteria: ff.BinaryOp = None, limit: int = None):
         try:
-            indexes = self.get_indexes(entity_type)
+            indexes = [i.name for i in self.get_indexes(entity_type)]
             pruned_criteria = criteria.prune(indexes)
 
             entities = super()._all(entity_type, pruned_criteria, limit)
