@@ -24,6 +24,7 @@ from typing import Type
 
 import firefly as ff
 import firefly.infrastructure as ffi
+from botocore.exceptions import ClientError
 from firefly import domain as ffd
 
 
@@ -181,23 +182,34 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         result = ff.retry(lambda: self._exec(count_sql, params))
         return result['records'][0][0]['longValue']
 
-    def _paginate(self, sql: str, params: list, entity: Type[ff.Entity], raw: bool = False):
+    def _paginate(self, sql: str, params: list, entity: Type[ff.Entity]):
         if entity.__name__ not in self._select_limits:
             self._select_limits[entity.__name__] = self._get_average_row_size(entity)
         limit = floor(self._size_limit / self._select_limits[entity.__name__])
-        count = self._get_result_count(sql, params)
-        queries = ceil(count / limit)
-        if queries < 1 or not queries:
-            queries = 1
+        offset = 0
 
-        query_params = []
-        for i in range(queries):
-            query_params.append((sql, params, limit, limit * i))
-        pool = multiprocessing.pool.ThreadPool(processes=queries)
-        results = pool.starmap(self._load_query_results, query_params)
+        ret = []
+        while True:
+            try:
+                result = ff.retry(
+                    lambda: self._exec(f'{sql} limit {limit} offset {offset}', params),
+                    should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
+                )
+            except ClientError as e:
+                if 'Database returned more than the allowed response size limit' in str(e) and limit > 10:
+                    limit = floor(limit / 2)
+                    self._select_limits[entity.__name__] = limit
+                    continue
+                raise e
 
-        results = list(itertools.chain.from_iterable(results))
-        return list(map(lambda d: self._build_entity(entity, d, raw=raw), results))
+            for row in result['records']:
+                obj = self._serializer.deserialize(row[0]['stringValue'])
+                ret.append(entity.from_dict(obj))
+            if len(result['records']) < limit:
+                break
+            offset += limit
+
+        return ret
 
     def _load_query_results(self, sql: str, params: list, limit: int, offset: int):
         return ff.retry(
