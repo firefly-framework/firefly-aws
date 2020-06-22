@@ -1,18 +1,12 @@
 import setuptools
-from setuptools.command.develop import develop
-from setuptools.command.install import install
-
-with open("README.md", "r") as fh:
-    long_description = fh.read()
 
 
 setuptools.setup(
     name='firefly-aws',
-    version='0.1.0',
+    version='1.0.0',
     author="",
     author_email="",
     description="Put project description here.",
-    long_description=long_description,
     url="",
     entry_points={
         'console_scripts': ['firefly=firefly.presentation.cli:main']
