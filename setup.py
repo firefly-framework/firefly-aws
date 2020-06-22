@@ -6,7 +6,7 @@ setuptools.setup(
     version='1.0.0',
     author="",
     author_email="",
-    description="Put project description here.",
+    description="AWS extension for the Firefly framework.",
     url="",
     entry_points={
         'console_scripts': ['firefly=firefly.presentation.cli:main']
@@ -15,7 +15,8 @@ setuptools.setup(
         'boto3>=1.12.42',
         'cognitojwt>=1.2.2',
         'dateparser>=0.7.4',
-        'firefly-dependency-injection>=0.1',
+        'firefly-dependency-injection>=1.0.0',
+        'firefly-framework>=1.0.1',
         'requests>=2.23.0',
         'troposphere>=2.6.1',
     ],

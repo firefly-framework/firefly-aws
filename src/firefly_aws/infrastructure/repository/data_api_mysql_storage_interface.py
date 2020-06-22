@@ -76,7 +76,7 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
 
     def _get_average_row_size(self, entity: Type[ff.Entity]):
         result = ff.retry(
-            lambda: self._exec(f"select CEIL(AVG(LENGTH(obj))) from {self._fqtn(entity)}", [])
+            lambda: self._data_api.execute(f"select CEIL(AVG(LENGTH(obj))) from {self._fqtn(entity)}", [])
         )
         try:
             return result['records'][0][0]['longValue'] / 1024
@@ -93,7 +93,7 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
             and INDEX_NAME != 'PRIMARY'
         """
         result = ff.retry(
-            lambda: self._exec(sql, [])
+            lambda: self._data_api.execute(sql, [])
         )
 
         ret = []
@@ -103,14 +103,14 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
         return ret
 
     def _add_table_index(self, entity: Type[ffd.Entity], field_):
-        ff.retry(lambda: self._exec(
+        ff.retry(lambda: self._data_api.execute(
             f"alter table {self._fqtn(entity)} add column `{field_.name}` {self._db_type(field_)}", []
         ))
-        ff.retry(lambda: self._exec(f"create index `idx_{field_.name}` on {self._fqtn(entity)} (`{field_.name}`)", []))
+        ff.retry(lambda: self._data_api.execute(f"create index `idx_{field_.name}` on {self._fqtn(entity)} (`{field_.name}`)", []))
 
     def _drop_table_index(self, entity: Type[ffd.Entity], name: str):
-        ff.retry(lambda: self._exec(f"drop index `idx_{name}` on {self._fqtn(entity)}", []))
-        ff.retry(lambda: self._exec(f"alter table {self._fqtn(entity)} drop column `{name}`", []))
+        ff.retry(lambda: self._data_api.execute(f"drop index `idx_{name}` on {self._fqtn(entity)}", []))
+        ff.retry(lambda: self._data_api.execute(f"alter table {self._fqtn(entity)} drop column `{name}`", []))
 
     def _generate_column_list(self, entity: Type[ffd.Entity]):
         values = ['id', 'obj']
@@ -153,9 +153,9 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
         for chunk in [obj[i:i+n] for i in range(0, len(obj), n)]:
             if first:
                 if update:
-                    ff.retry(lambda: self._exec(*self._generate_update(entity, part=chunk)))
+                    ff.retry(lambda: self._data_api.execute(*self._generate_update(entity, part=chunk)))
                 else:
-                    ff.retry(lambda: self._exec(*self._generate_insert(entity, part=chunk)))
+                    ff.retry(lambda: self._data_api.execute(*self._generate_insert(entity, part=chunk)))
                 first = False
             else:
                 sql = f"update {self._fqtn(entity.__class__)} set obj = CONCAT(obj, :str) where id = :id"
@@ -163,7 +163,7 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
                     {'name': 'id', 'value': {'stringValue': entity.id_value()}},
                     {'name': 'str', 'value': {'stringValue': chunk}},
                 ]
-                ff.retry(lambda: self._exec(sql, params))
+                ff.retry(lambda: self._data_api.execute(sql, params))
 
     def _fetch_large_document(self, id_: str, entity: Type[ff.Entity]):
         n = self._size_limit * 1024
@@ -172,8 +172,8 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
         while True:
             sql = f"select SUBSTR(obj, {start}, {n}) as obj from {self._fqtn(entity)} where id = :id"
             params = [{'name': 'id', 'value': {'stringValue': id_}}]
-            # result = ff.retry(self._exec(sql, params))
-            result = self._exec(sql, params)
+            # result = ff.retry(self._data_api.execute(sql, params))
+            result = self._data_api.execute(sql, params)
             document += result['records'][0][0]['stringValue']
             if len(result['records'][0][0]['stringValue']) < n:
                 break
@@ -184,7 +184,7 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
     def _fetch_multiple_large_documents(self, sql: str, params: list, entity: Type[ff.Entity]):
         ret = []
         sql = sql.replace('select obj', 'select id')
-        result = ff.retry(lambda: self._exec(sql, params))
+        result = ff.retry(lambda: self._data_api.execute(sql, params))
         for row in result['records']:
             ret.append(self._fetch_large_document(row[0]['stringValue'], entity))
         return ret

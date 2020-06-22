@@ -32,6 +32,7 @@ class Container(di.Container):
     sqs_client = lambda self: boto3.client('sqs')
     rds_data_client = lambda self: boto3.client('rds-data')
 
+    data_api: infra.DataApi = infra.DataApi
     s3_service: infra.BotoS3Service = infra.BotoS3Service
     lambda_executor: domain.LambdaExecutor = domain.LambdaExecutor
     message_transport: ff.MessageTransport = infra.BotoMessageTransport

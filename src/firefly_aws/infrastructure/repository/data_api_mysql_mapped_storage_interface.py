@@ -36,7 +36,7 @@ class DataApiMysqlMappedStorageInterface(DataApiStorageInterface):
             where table_schema = '{schema}'
             and table_name = '{table}'
         """
-        result = ff.retry(lambda: self._exec(sql, []))
+        result = ff.retry(lambda: self._data_api.execute(sql, []))
         try:
             return result['records'][0][0]['longValue'] / 1024
         except KeyError:
@@ -52,7 +52,7 @@ class DataApiMysqlMappedStorageInterface(DataApiStorageInterface):
             and INDEX_NAME != 'PRIMARY'
         """
         result = ff.retry(
-            lambda: self._exec(sql, [])
+            lambda: self._data_api.execute(sql, [])
         )
 
         ret = []
@@ -62,17 +62,17 @@ class DataApiMysqlMappedStorageInterface(DataApiStorageInterface):
         return ret
 
     def _add_table_index(self, entity: Type[ffd.Entity], field_):
-        ff.retry(lambda: self._exec(
+        ff.retry(lambda: self._data_api.execute(
             f"alter table {self._fqtn(entity)} add column `{field_.name}` {self._db_type(field_)}", []
         ))
         name = f'`{field_.name}`'
-        ff.retry(lambda: self._exec(f"create index `idx_{field_.name}` on {self._fqtn(entity)} ({name})", []))
+        ff.retry(lambda: self._data_api.execute(f"create index `idx_{field_.name}` on {self._fqtn(entity)} ({name})", []))
 
     def _drop_table_index(self, entity: Type[ffd.Entity], name: str):
         index = f'`idx_{name}`'
-        ff.retry(lambda: self._exec(f"drop index {index} on {self._fqtn(entity)}", []))
+        ff.retry(lambda: self._data_api.execute(f"drop index {index} on {self._fqtn(entity)}", []))
         column = f'`{name}`'
-        ff.retry(lambda: self._exec(f"alter table {self._fqtn(entity)} drop column {column}", []))
+        ff.retry(lambda: self._data_api.execute(f"alter table {self._fqtn(entity)} drop column {column}", []))
 
     def _generate_column_list(self, entity: Type[ffd.Entity]):
         if entity not in self._cache['parts']['columns']:

@@ -15,3 +15,4 @@
 from .boto_message_transport import BotoMessageTransport
 from .boto_s3_service import BotoS3Service
 from .cognito_jwt_decoder import CognitoJwtDecoder
+from .data_api import DataApi

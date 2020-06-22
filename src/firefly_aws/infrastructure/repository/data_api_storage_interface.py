@@ -14,12 +14,10 @@
 
 from __future__ import annotations
 
-import itertools
-import multiprocessing.pool
 from abc import ABC, abstractmethod
 from dataclasses import fields
 from datetime import datetime
-from math import floor, ceil
+from math import floor
 from typing import Type
 
 import firefly as ff
@@ -27,14 +25,14 @@ import firefly.infrastructure as ffi
 from botocore.exceptions import ClientError
 from firefly import domain as ffd
 
+from ..service.data_api import DataApi
+
 
 class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
     _cache: dict = None
     _rds_data_client = None
     _serializer: ffi.JsonSerializer = None
-    _db_arn: str = None
-    _db_secret_arn: str = None
-    _db_name: str = None
+    _data_api: DataApi = None
     _size_limit: int = 1000  # In KB
 
     def __init__(self):
@@ -46,7 +44,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
 
     def _add(self, entity: ff.Entity):
         sql, params = self._generate_insert(entity)
-        ff.retry(lambda: self._exec(sql, params))
+        ff.retry(lambda: self._data_api.execute(sql, params))
 
     def _all(self, entity_type: Type[ff.Entity], criteria: ff.BinaryOp = None, limit: int = None):
         sql = f"select {self._generate_select_list(entity_type)} from {self._fqtn(entity_type)}"
@@ -64,7 +62,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         sql = f"select {self._generate_select_list(entity_type)} from {self._fqtn(entity_type)} where id = :id"
         params = [{'name': 'id', 'value': {'stringValue': uuid}}]
         result = ff.retry(
-            lambda: self._exec(sql, params),
+            lambda: self._data_api.execute(sql, params),
             should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
         )
         if len(result['records']) == 0:
@@ -77,11 +75,11 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         params = [
             {'name': 'id', 'value': {'stringValue': entity.id_value()}},
         ]
-        ff.retry(self._exec(sql, params))
+        ff.retry(lambda: self._data_api.execute(sql, params))
 
     def _update(self, entity: ff.Entity):
         sql, params = self._generate_update(entity)
-        ff.retry(lambda: self._exec(sql, params))
+        ff.retry(lambda: self._data_api.execute(sql, params))
 
     def _generate_insert(self, entity: ff.Entity, part: str = None):
         t = entity.__class__
@@ -150,8 +148,8 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         return f'where {clause}', ret
 
     def _execute_ddl(self, entity: Type[ffd.Entity]):
-        self._exec(f"create database if not exists {entity.get_class_context()}", [])
-        self._exec(self._generate_create_table(entity), [])
+        self._data_api.execute(f"create database if not exists {entity.get_class_context()}", [])
+        self._data_api.execute(self._generate_create_table(entity), [])
 
         table_indexes = self._get_table_indexes(entity)
         indexes = self._get_indexes(entity)
@@ -179,7 +177,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
 
     def _get_result_count(self, sql: str, params: list):
         count_sql = f"select count(*) from ({sql}) a"
-        result = ff.retry(lambda: self._exec(count_sql, params))
+        result = ff.retry(lambda: self._data_api.execute(count_sql, params))
         return result['records'][0][0]['longValue']
 
     def _paginate(self, sql: str, params: list, entity: Type[ff.Entity]):
@@ -192,7 +190,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         while True:
             try:
                 result = ff.retry(
-                    lambda: self._exec(f'{sql} limit {limit} offset {offset}', params),
+                    lambda: self._data_api.execute(f'{sql} limit {limit} offset {offset}', params),
                     should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
                 )
             except ClientError as e:
@@ -213,7 +211,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
 
     def _load_query_results(self, sql: str, params: list, limit: int, offset: int):
         return ff.retry(
-            lambda: self._exec(f'{sql} limit {limit} offset {offset}', params),
+            lambda: self._data_api.execute(f'{sql} limit {limit} offset {offset}', params),
             should_retry=lambda err: 'Database returned more than the allowed response size limit'
                                      not in str(err)
         )['records']
@@ -227,14 +225,3 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         :return:
         """
         pass
-
-    def _exec(self, sql: str, params: list):
-        self.debug(sql)
-        self.debug(params)
-        return self._rds_data_client.execute_statement(
-            resourceArn=self._db_arn,
-            secretArn=self._db_secret_arn,
-            database=self._db_name,
-            sql=sql,
-            parameters=params
-        )
