@@ -3,7 +3,7 @@ import setuptools
 
 setuptools.setup(
     name='firefly-aws',
-    version='1.0.0',
+    version='1.0.1',
     author="",
     author_email="",
     description="AWS extension for the Firefly framework.",
@@ -20,6 +20,8 @@ setuptools.setup(
         'requests>=2.23.0',
         'troposphere>=2.6.1',
     ],
+    data_files=[('firefly/firefly_aws', ['firefly.yml'])],
+    include_package_data=True,
     packages=setuptools.PEP420PackageFinder.find('src'),
     package_dir={'': 'src'},
     classifiers=[
