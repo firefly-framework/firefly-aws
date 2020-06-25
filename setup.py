@@ -16,7 +16,7 @@ setuptools.setup(
         'cognitojwt>=1.2.2',
         'dateparser>=0.7.4',
         'firefly-dependency-injection>=1.0.0',
-        'firefly-framework>=1.0.1',
+        'firefly-framework>=1.0.9',
         'requests>=2.23.0',
         'troposphere>=2.6.1',
     ],

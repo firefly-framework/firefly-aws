@@ -14,18 +14,19 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Optional
 
-import firefly_aws.domain as domain
 import firefly as ff
 from firefly import domain as ffd
 
+import firefly_aws.domain as domain
 
-@ff.register_middleware(index=1)
-class AuthenticatingMiddleware(ff.Middleware, ff.LoggerAware):
+
+@ff.authenticator()
+class CognitoAuthenticator(ff.Handler, ff.LoggerAware):
     _jwt_decoder: domain.JwtDecoder = None
 
-    def __call__(self, message: ffd.Message, next_: Callable) -> ffd.Message:
+    def handle(self, message: ffd.Message) -> Optional[bool]:
         if 'http_request' in message.headers and message.headers.get('secured', True):
             token = None
             for k, v in message.headers['http_request']['headers'].items():
@@ -39,6 +40,7 @@ class AuthenticatingMiddleware(ff.Middleware, ff.LoggerAware):
             self.debug('Decoding token')
             claims = self._jwt_decoder.decode(token)
             self.debug('Got sub: %s', claims['sub'])
-            message.headers['sub'] = claims['sub']
+            message.headers['decoded_token'] = claims
+            return True
 
-        return next_(message)
+        return message.headers.get('secured') is not True
