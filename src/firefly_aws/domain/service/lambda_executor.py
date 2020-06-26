@@ -43,6 +43,9 @@ class LambdaExecutor(ff.DomainService):
         self._version_matcher = re.compile(r'^/v\d')
 
     def run(self, event: dict, context: dict):
+        self.debug('Event: %s', event)
+        self.debug('Context: %s', context)
+
         if 'requestContext' in event and 'http' in event['requestContext']:
             self.info('HTTP request')
             return self._handle_http_event(event)
@@ -101,6 +104,9 @@ class LambdaExecutor(ff.DomainService):
                     message_name = message_name.get_fqn()
             self.info(f'Matched route')
 
+            if 'queryStringParameters' in event:
+                params.update(event['queryStringParameters'])
+
             params['headers'] = {
                 'http_request': {
                     'headers': event['headers'],
@@ -108,6 +114,7 @@ class LambdaExecutor(ff.DomainService):
                 'secured': endpoint.secured,
                 'scopes': endpoint.scopes,
             }
+
             try:
                 if method.lower() == 'get':
                     return self._handle_http_response(self.request(message_name, data=params))
