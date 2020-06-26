@@ -68,6 +68,17 @@ class LambdaExecutor(ff.DomainService):
         #     return self.request(message)
 
     def _handle_http_event(self, event: dict):
+        route = self._version_matcher.sub('', event['rawPath'])
+        method = event['requestContext']['http']['method']
+
+        if method.lower() == 'options':
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                }
+            }
+
         body = None
         if 'body' in event:
             for k, v in event['headers'].items():
@@ -79,9 +90,6 @@ class LambdaExecutor(ff.DomainService):
             if body is None:
                 body = self._serializer.deserialize(event['body'])
 
-        route = self._version_matcher.sub('', event['rawPath'])
-        method = event['requestContext']['http']['method']
-
         try:
             self.info(f'Trying to match route: "{method} {route}"')
             endpoint, params = self._rest_router.match(route, method)
@@ -92,14 +100,6 @@ class LambdaExecutor(ff.DomainService):
                 if inspect.isclass(message_name):
                     message_name = message_name.get_fqn()
             self.info(f'Matched route')
-
-            if method.lower() == 'options':
-                return {
-                    'statusCode': 200,
-                    'headers': {
-                        'Access-Control-Allow-Origin': '*',
-                    }
-                }
 
             params['headers'] = {
                 'http_request': {
