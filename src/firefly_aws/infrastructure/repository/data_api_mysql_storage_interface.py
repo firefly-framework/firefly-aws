@@ -25,8 +25,8 @@ from .data_api_storage_interface import DataApiStorageInterface
 
 
 class DataApiMysqlStorageInterface(DataApiStorageInterface):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def _add(self, entity: ff.Entity):
         try:

@@ -35,8 +35,8 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
     _data_api: DataApi = None
     _size_limit: int = 1000  # In KB
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self._select_limits = {}
 
     def _disconnect(self):
