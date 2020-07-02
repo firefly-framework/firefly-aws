@@ -31,7 +31,7 @@ class CognitoAuthenticator(ff.Handler, ff.LoggerAware):
             token = None
             for k, v in message.headers['http_request']['headers'].items():
                 if k.lower() == 'authorization':
-                    if not v.startswith('Bearer'):
+                    if not v.lower().startswith('bearer'):
                         raise ff.UnauthenticatedError()
                     token = v.split(' ')[-1]
             if token is None:
@@ -39,6 +39,10 @@ class CognitoAuthenticator(ff.Handler, ff.LoggerAware):
 
             self.debug('Decoding token')
             claims = self._jwt_decoder.decode(token)
+            try:
+                claims['scopes'] = claims['scope'].split(' ')
+            except KeyError:
+                pass
             self.debug('Got sub: %s', claims['sub'])
             message.headers['decoded_token'] = claims
             return True
