@@ -86,7 +86,7 @@ class LambdaExecutor(ff.DomainService):
         if 'body' in event:
             for k, v in event['headers'].items():
                 if k.lower() == 'content-type':
-                    if v.lower() == 'application/json':
+                    if 'application/json' in v.lower():
                         body = self._serializer.deserialize(event['body'])
                     else:
                         body = event['body']
