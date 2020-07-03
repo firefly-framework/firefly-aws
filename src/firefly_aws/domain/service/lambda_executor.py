@@ -58,6 +58,8 @@ class LambdaExecutor(ff.DomainService):
             'statusCode': 200,
             'headers': {
                 'Access-Control-Allow-Origin': '*',
+                'Access-Control-AllowMethods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+                'Access-Control-Allow-Headers': 'Authorization',
             },
             'body': '',
             'isBase64Encoded': False,
