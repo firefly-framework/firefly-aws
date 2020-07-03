@@ -31,6 +31,12 @@ STATUS_CODES = {
     'ApiError': 500,
 }
 
+ACCESS_CONTROL_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization',
+}
+
 
 class LambdaExecutor(ff.DomainService):
     _serializer: ff.Serializer = None
@@ -56,11 +62,7 @@ class LambdaExecutor(ff.DomainService):
 
         return {
             'statusCode': 200,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-AllowMethods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
-                'Access-Control-Allow-Headers': 'Authorization',
-            },
+            'headers': ACCESS_CONTROL_HEADERS,
             'body': '',
             'isBase64Encoded': False,
         }
@@ -79,9 +81,7 @@ class LambdaExecutor(ff.DomainService):
         if method.lower() == 'options':
             return {
                 'statusCode': 200,
-                'headers': {
-                    'Access-Control-Allow-Origin': '*',
-                }
+                'headers': ACCESS_CONTROL_HEADERS,
             }
 
         body = None
@@ -141,9 +141,7 @@ class LambdaExecutor(ff.DomainService):
 
     def _handle_http_response(self, response: any, status_code: int = 200, headers: dict = None):
         headers = headers or {}
-        headers.update({
-            'Access-Control-Allow-Origin': '*',
-        })
+        headers.update(ACCESS_CONTROL_HEADERS)
         ret = {
             'statusCode': status_code,
             'headers': headers,
