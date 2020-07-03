@@ -60,19 +60,21 @@ class LambdaExecutor(ff.DomainService):
             self.info('SQS message')
             return self._handle_sqs_event(event)
 
+        try:
+            message = self._serializer.deserialize(json.dumps(event))
+            if isinstance(message, ff.Command):
+                return self.invoke(message)
+            elif isinstance(message, ff.Query):
+                return self.request(message)
+        except:
+            pass
+
         return {
             'statusCode': 200,
             'headers': ACCESS_CONTROL_HEADERS,
             'body': '',
             'isBase64Encoded': False,
         }
-
-        # If I can get authorization working with non-rest routes, we can bring this back.
-        # message = self._serializer.deserialize(json.dumps(event))
-        # if isinstance(message, ff.Command):
-        #     return self.invoke(message)
-        # elif isinstance(message, ff.Query):
-        #     return self.request(message)
 
     def _handle_http_event(self, event: dict):
         route = self._version_matcher.sub('', event['rawPath'])
