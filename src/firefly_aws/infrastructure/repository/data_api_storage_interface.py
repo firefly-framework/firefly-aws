@@ -180,7 +180,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         result = ff.retry(lambda: self._data_api.execute(count_sql, params))
         return result['records'][0][0]['longValue']
 
-    def _paginate(self, sql: str, params: list, entity: Type[ff.Entity]):
+    def _paginate(self, sql: str, params: list, entity: Type[ff.Entity], raw: bool = False):
         if entity.__name__ not in self._select_limits:
             self._select_limits[entity.__name__] = self._get_average_row_size(entity)
         limit = floor(self._size_limit / self._select_limits[entity.__name__])
@@ -201,8 +201,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
                 raise e
 
             for row in result['records']:
-                obj = self._serializer.deserialize(row[0]['stringValue'])
-                ret.append(entity.from_dict(obj))
+                ret.append(self._build_entity(entity, row, raw=raw))
             if len(result['records']) < limit:
                 break
             offset += limit
