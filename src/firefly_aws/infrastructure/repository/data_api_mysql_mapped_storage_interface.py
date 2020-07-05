@@ -25,8 +25,8 @@ from .data_api_storage_interface import DataApiStorageInterface
 
 # noinspection PyDataclass
 class DataApiMysqlMappedStorageInterface(DataApiStorageInterface):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def _get_average_row_size(self, entity: Type[ff.Entity]):
         schema, table = self._fqtn(entity).split('.')

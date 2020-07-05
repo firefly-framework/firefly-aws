@@ -19,6 +19,7 @@ from typing import List, Callable, Optional, Union
 import firefly as ff
 import inflection
 from botocore.exceptions import ClientError
+from firefly import domain as ffd
 from firefly.domain.repository.repository import T
 
 
@@ -72,6 +73,18 @@ class S3Repository(ff.Repository[T]):
     def reduce(self, cb: Callable) -> Optional[T]:
         # TODO implement search criteria
         pass
+
+    def append(self, entity: T):
+        raise NotImplementedError()
+
+    def commit(self):
+        raise NotImplementedError()
+
+    def execute_ddl(self):
+        raise NotImplementedError()
+
+    def raw(self, cb: Union[Callable, ffd.BinaryOp] = None, limit: int = None):
+        raise NotImplementedError()
 
     def __iter__(self):
         pass
