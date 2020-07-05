@@ -183,6 +183,8 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
     def _paginate(self, sql: str, params: list, entity: Type[ff.Entity], raw: bool = False):
         if entity.__name__ not in self._select_limits:
             self._select_limits[entity.__name__] = self._get_average_row_size(entity)
+            if self._select_limits[entity.__name__] == 0:
+                self._select_limits[entity.__name__] = 1
         limit = floor(self._size_limit / self._select_limits[entity.__name__])
         offset = 0
 
