@@ -97,7 +97,7 @@ class DataApiMysqlMappedStorageInterface(DataApiStorageInterface):
         return params
 
     def _generate_update_list(self, entity: Type[ffd.Entity]):
-        values = ['obj=:obj']
+        values = []
         for index in self.get_indexes(entity):
             values.append(f'`{index.name}`=:{index.name}')
         return ','.join(values)
