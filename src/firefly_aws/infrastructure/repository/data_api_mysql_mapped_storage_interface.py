@@ -98,8 +98,8 @@ class DataApiMysqlMappedStorageInterface(DataApiStorageInterface):
 
     def _generate_update_list(self, entity: Type[ffd.Entity]):
         values = []
-        for index in self.get_indexes(entity):
-            values.append(f'`{index.name}`=:{index.name}')
+        for field_ in fields(entity):
+            values.append(f'`{field_.name}`=:{field_.name}')
         return ','.join(values)
 
     def _generate_select_list(self, entity: Type[ffd.Entity]):
