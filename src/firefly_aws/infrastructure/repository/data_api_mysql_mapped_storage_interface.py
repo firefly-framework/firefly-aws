@@ -97,10 +97,7 @@ class DataApiMysqlMappedStorageInterface(DataApiStorageInterface):
         return params
 
     def _generate_update_list(self, entity: Type[ffd.Entity]):
-        values = []
-        for field_ in fields(entity):
-            values.append(f'`{field_.name}`=:{field_.name}')
-        return ','.join(values)
+        return ','.join(list(map(lambda f: f'`{f.name}`=:{f.name}', self._visible_fields(entity))))
 
     def _generate_select_list(self, entity: Type[ffd.Entity]):
         if entity not in self._cache['parts']['select']:
