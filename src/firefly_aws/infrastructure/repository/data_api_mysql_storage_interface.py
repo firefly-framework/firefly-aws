@@ -190,6 +190,8 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
         return ret
 
     def _build_entity(self, entity: Type[ffd.Entity], data, raw: bool = False):
+        if raw is True:
+            return self._serializer.deserialize(data[0]['stringValue'])
         return entity.from_dict(self._serializer.deserialize(data[0]['stringValue']))
 
     def _generate_select_list(self, entity: Type[ffd.Entity]):

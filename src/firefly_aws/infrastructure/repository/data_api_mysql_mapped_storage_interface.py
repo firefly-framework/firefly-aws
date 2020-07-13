@@ -96,14 +96,19 @@ class DataApiMysqlMappedStorageInterface(DataApiStorageInterface):
             params.append(self._generate_param_entry(field_.name, field_.type, getattr(entity, field_.name)))
         return params
 
+    def _generate_param_entry(self, name: str, type_: str, val: any):
+        if type_ == 'dict' or type_ is dict:
+            return {'name': name, 'value': {'stringValue': self._serializer.serialize(val)}}
+
+        return super()._generate_param_entry(name, type_, val)
+
     def _generate_update_list(self, entity: Type[ffd.Entity]):
         return ','.join(list(map(lambda f: f'`{f.name}`=:{f.name}', self._visible_fields(entity))))
 
     def _generate_select_list(self, entity: Type[ffd.Entity]):
         if entity not in self._cache['parts']['select']:
-            self._cache['parts']['select'][entity] = ','.join(
-                list(map(lambda f: f'`{f.name}`', self._visible_fields(entity)))
-            )
+            fields_ = list(map(lambda f: f'`{f.name}`', self._visible_fields(entity)))
+            self._cache['parts']['select'][entity] = ','.join(fields_)
         return self._cache['parts']['select'][entity]
 
     def _build_entity(self, entity: Type[ffd.Entity], data, raw: bool = False):
