@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import os
+
 import boto3
 import firefly_di as di
 
@@ -35,5 +37,9 @@ class Container(di.Container):
     data_api: infra.DataApi = infra.DataApi
     s3_service: infra.BotoS3Service = infra.BotoS3Service
     lambda_executor: domain.LambdaExecutor = domain.LambdaExecutor
-    message_transport: ff.MessageTransport = infra.BotoMessageTransport
     jwt_decoder: domain.JwtDecoder = infra.CognitoJwtDecoder
+
+
+if os.environ['ENV'] != 'local':
+    Container.message_transport = infra.BotoMessageTransport
+    Container.__annotations__['message_transport'] = ff.MessageTransport

@@ -39,6 +39,9 @@ class CognitoAuthenticator(ff.Handler, ff.LoggerAware):
 
             self.debug('Decoding token')
             claims = self._jwt_decoder.decode(token)
+            if claims is None:
+                return False
+
             try:
                 claims['scopes'] = claims['scope'].split(' ')
             except KeyError:

@@ -32,5 +32,7 @@ class CognitoJwtDecoder(domain.JwtDecoder):
                 self._user_pool_id,
                 app_client_id=client_id
             )
+        except KeyError:
+            return
         except CognitoJWTException:
             raise ff.UnauthenticatedError()

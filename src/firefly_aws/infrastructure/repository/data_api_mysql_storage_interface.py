@@ -126,7 +126,7 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
 
     def _generate_parameters(self, entity: ff.Entity, part: str = None):
         if part is None:
-            obj = self._serializer.serialize(entity)
+            obj = self._serializer.serialize(entity.to_dict(force_all=True))
             if (len(obj) / 1024) >= self._size_limit:
                 raise domain.DocumentTooLarge()
         else:
@@ -147,7 +147,7 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
         return ','.join(values)
 
     def _insert_large_document(self, entity: ff.Entity, update: bool = False):
-        obj = self._serializer.serialize(entity)
+        obj = self._serializer.serialize(entity.to_dict(force_all=True))
         n = self._size_limit * 1024
         first = True
         for chunk in [obj[i:i+n] for i in range(0, len(obj), n)]:
