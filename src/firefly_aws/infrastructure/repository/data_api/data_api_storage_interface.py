@@ -25,7 +25,7 @@ import firefly.infrastructure as ffi
 from botocore.exceptions import ClientError
 from firefly import domain as ffd
 
-from ..service.data_api import DataApi
+from firefly_aws.infrastructure.service.data_api import DataApi
 
 
 class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):

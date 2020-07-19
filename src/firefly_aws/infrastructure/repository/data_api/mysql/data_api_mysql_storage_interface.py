@@ -21,7 +21,7 @@ import firefly_aws.domain as domain
 from botocore.exceptions import ClientError
 from firefly import domain as ffd
 
-from .data_api_storage_interface import DataApiStorageInterface
+from ..data_api_storage_interface import DataApiStorageInterface
 
 
 class DataApiMysqlStorageInterface(DataApiStorageInterface):

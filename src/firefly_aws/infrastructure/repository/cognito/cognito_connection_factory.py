@@ -12,6 +12,12 @@
 #  You should have received a copy of the GNU General Public License along with Firefly. If not, see
 #  <http://www.gnu.org/licenses/>.
 
-from .cognito import *
-from .data_api import *
-from .s3 import *
+from __future__ import annotations
+
+import boto3
+import firefly as ff
+
+
+class CognitoConnectionFactory(ff.ConnectionFactory):
+    def __call__(self, **kwargs):
+        return boto3.client('cognito-idp', **kwargs)

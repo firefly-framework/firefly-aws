@@ -61,7 +61,9 @@ class LambdaExecutor(ff.DomainService):
             return self._handle_sqs_event(event)
 
         try:
-            message = self._serializer.deserialize(json.dumps(event))
+            message = self._generate_message_for_special_events(event)
+            if message is False:
+                message = self._serializer.deserialize(json.dumps(event))
             if isinstance(message, ff.Command):
                 return self.invoke(message)
             elif isinstance(message, ff.Query):
@@ -175,6 +177,13 @@ class LambdaExecutor(ff.DomainService):
             self.complete_handshake(event['Records'][0])
         else:
             self.complete_batch_handshake(event['Records'])
+
+    def _generate_message_for_special_events(self, event: dict):
+        if 'request' in event and 'response' in event:
+            return self._message_factory.query('firefly_iaaa.GetTokenAccessRights', data={
+                'event': event
+            })
+        return False
 
     def load_payload(self, key: str):
         response = self._s3_client.get_object(

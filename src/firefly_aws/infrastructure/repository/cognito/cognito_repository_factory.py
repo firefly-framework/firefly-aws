@@ -17,26 +17,19 @@ from __future__ import annotations
 from typing import Type, TypeVar
 
 import firefly as ff
-import firefly_di as di
-from firefly_aws.infrastructure.repository.s3_repository import S3Repository
+from firefly import Repository
+
+from .cognito_repository import CognitoRepository
 
 E = TypeVar('E', bound=ff.Entity)
 
 
-class S3RepositoryFactory(ff.RepositoryFactory):
-    _context_map: ff.ContextMap = None
-    _container: di.Container = None
+class CognitoRepositoryFactory(ff.RepositoryFactory):
+    def __init__(self, cognito_idp_client):
+        self._cognito_idp_client = cognito_idp_client
 
-    def __init__(self, client, prefix: str = 'aggregates'):
-        self._client = client
-        self._prefix = prefix
-
-    def __call__(self, entity: Type[E]) -> ff.Repository:
-        class Repo(S3Repository[entity]):
+    def __call__(self, entity: Type[E]) -> Repository:
+        class Repo(CognitoRepository[entity]):
             pass
 
-        config = self._context_map.get_context('firefly_aws').config
-
-        return Repo(
-            self._container.s3_client, self._container.serializer, bucket=config.get('bucket'), prefix=self._prefix
-        )
+        return Repo(self._cognito_idp_client)
