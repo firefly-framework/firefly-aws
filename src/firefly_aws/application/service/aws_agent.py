@@ -80,6 +80,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         except AttributeError:
             raise ff.FrameworkError('No deployment bucket configured in firefly_aws')
 
+        self._deployment = deployment
         self._project = self._configuration.all.get('project')
         aws_config = self._configuration.contexts.get('firefly_aws')
         self._aws_config = aws_config
@@ -385,7 +386,11 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         self.info('Installing source files')
         # TODO use setup.py instead?
         import subprocess
-        subprocess.call(['pip', 'install', '-r', 'requirements.txt', '-t', './build/python-sources'])
+        subprocess.call([
+            'pip', 'install',
+            '-r', self._deployment.requirements_file or 'requirements.txt',
+            '-t', './build/python-sources'
+        ])
 
         self.info('Packaging artifact')
         subprocess.call(['cp', 'templates/aws/handlers.py', 'build/python-sources/.'])

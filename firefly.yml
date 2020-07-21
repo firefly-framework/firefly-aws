@@ -7,10 +7,10 @@ contexts:
     region: ${AWS_DEFAULT_REGION}
     bucket: firefly-aws
     is_extension: true
-    storage:
-      services:
-        s3: ~
-      default: s3
+#    storage:
+#      services:
+#        s3: ~
+#      default: s3
 
 evnironments:
   dev: ~

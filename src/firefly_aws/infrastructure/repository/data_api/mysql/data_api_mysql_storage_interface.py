@@ -25,6 +25,8 @@ from ..data_api_storage_interface import DataApiStorageInterface
 
 
 class DataApiMysqlStorageInterface(DataApiStorageInterface):
+    _registry: ff.Registry = None
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -50,7 +52,7 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
 
     def _all(self, entity_type: Type[ff.Entity], criteria: ff.BinaryOp = None, limit: int = None):
         try:
-            indexes = [i.name for i in self.get_indexes(entity_type)]
+            indexes = [i.name for i in self.get_indexes(entity_type, include_ids=True)]
             pruned_criteria = None
             if criteria is not None:
                 pruned_criteria = criteria.prune(indexes)
@@ -126,7 +128,7 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
 
     def _generate_parameters(self, entity: ff.Entity, part: str = None):
         if part is None:
-            obj = self._serializer.serialize(entity.to_dict(force_all=True))
+            obj = self._serialize_entity(entity)
             if (len(obj) / 1024) >= self._size_limit:
                 raise domain.DocumentTooLarge()
         else:
@@ -192,7 +194,15 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
     def _build_entity(self, entity: Type[ffd.Entity], data, raw: bool = False):
         if raw is True:
             return self._serializer.deserialize(data[0]['stringValue'])
-        return entity.from_dict(self._serializer.deserialize(data[0]['stringValue']))
+        data = self._serializer.deserialize(data[0]['stringValue'])
+        for k, v in self._get_relationships(entity).items():
+            if v['this_side'] == 'one':
+                data[k] = self._registry(v['target']).find(data[k])
+            elif v['this_side'] == 'many':
+                data[k] = self._registry(v['target']).filter(
+                    lambda ee: getattr(ee, v['target'].id_column()).is_in(data[k])
+                )
+        return entity.from_dict(data)
 
     def _generate_select_list(self, entity: Type[ffd.Entity]):
         return 'obj'

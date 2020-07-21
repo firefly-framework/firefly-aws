@@ -179,7 +179,7 @@ class LambdaExecutor(ff.DomainService):
             self.complete_batch_handshake(event['Records'])
 
     def _generate_message_for_special_events(self, event: dict):
-        if 'request' in event and 'response' in event:
+        if 'triggerSource' in event and event['triggerSource'] == 'TokenGeneration_HostedAuth':
             return self._message_factory.query('firefly_iaaa.GetTokenAccessRights', data={
                 'event': event
             })
