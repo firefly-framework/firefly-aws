@@ -42,10 +42,12 @@ class CognitoAuthenticator(ff.Handler, ff.LoggerAware):
             if claims is None:
                 return False
 
-            try:
-                claims['scopes'] = claims['scope'].split(' ')
-            except KeyError:
-                pass
+            if 'cognito:groups' in claims:
+                claims['scopes'] = claims['cognito:groups']
+
+            if 'scope' in claims:
+                claims['client_scopes'] = claims['scope'].split(' ')
+
             self.debug('Got sub: %s', claims['sub'])
             message.headers['decoded_token'] = claims
             return True
