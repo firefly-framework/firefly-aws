@@ -42,11 +42,17 @@ class CognitoAuthenticator(ff.Handler, ff.LoggerAware):
             if claims is None:
                 return False
 
+            scopes = []
             if 'cognito:groups' in claims:
-                claims['scopes'] = claims['cognito:groups']
-
-            if 'scope' in claims:
-                claims['client_scopes'] = claims['scope'].split(' ')
+                groups = list(map(lambda g: g.lower(), claims['cognito:groups']))
+                self.debug('cognito:groups: %s', groups)
+                for client_claim in claims['scope'].split(' '):
+                    client_claim = client_claim.replace('/', '.').lower()
+                    self.debug('%s in %s', client_claim, groups)
+                    if client_claim in groups:
+                        scopes.append(client_claim)
+            claims['scopes'] = scopes
+            self.debug('Scopes: %s', claims['scopes'])
 
             self.debug('Got sub: %s', claims['sub'])
             message.headers['decoded_token'] = claims
