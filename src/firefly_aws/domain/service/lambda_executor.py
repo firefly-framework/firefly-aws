@@ -42,6 +42,7 @@ class LambdaExecutor(ff.DomainService):
     _serializer: ff.Serializer = None
     _message_factory: ff.MessageFactory = None
     _rest_router: ff.RestRouter = None
+    _transaction_handler = ff.TransactionHandlingMiddleware = None
     _s3_client = None
     _bucket: str = None
 
@@ -51,6 +52,8 @@ class LambdaExecutor(ff.DomainService):
     def run(self, event: dict, context: dict):
         self.debug('Event: %s', event)
         self.debug('Context: %s', context)
+
+        self._transaction_handler.reset_level()
 
         if 'requestContext' in event and 'http' in event['requestContext']:
             self.info('HTTP request')
