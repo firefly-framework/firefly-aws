@@ -17,7 +17,6 @@ from __future__ import annotations
 import inspect
 import json
 import re
-import firefly_di as di
 from pprint import pprint
 from typing import Union
 
@@ -43,7 +42,7 @@ class LambdaExecutor(ff.DomainService):
     _serializer: ff.Serializer = None
     _message_factory: ff.MessageFactory = None
     _rest_router: ff.RestRouter = None
-    _container = di.Container = None
+    _transaction_handler = ff.TransactionHandlingMiddleware = None
     _s3_client = None
     _bucket: str = None
 
@@ -54,7 +53,7 @@ class LambdaExecutor(ff.DomainService):
         self.debug('Event: %s', event)
         self.debug('Context: %s', context)
 
-        self._container.transaction_handler.reset_level()
+        self._transaction_handler.reset_level()
 
         if 'requestContext' in event and 'http' in event['requestContext']:
             self.info('HTTP request')
