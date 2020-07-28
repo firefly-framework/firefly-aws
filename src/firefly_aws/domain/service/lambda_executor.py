@@ -61,7 +61,13 @@ class LambdaExecutor(ff.DomainService):
             return self._handle_sqs_event(event)
 
         try:
-            message = self._generate_message_for_special_events(event)
+            message = False
+            if self._is_cognito_trigger_event(event):
+                message = self._generate_cognito_trigger_messages(event)
+                if message is False:
+                    self.debug('Passing through cognito trigger event')
+                    return event
+
             if message is False:
                 message = self._serializer.deserialize(json.dumps(event))
             if isinstance(message, ff.Command):
@@ -178,8 +184,12 @@ class LambdaExecutor(ff.DomainService):
         else:
             self.complete_batch_handshake(event['Records'])
 
-    def _generate_message_for_special_events(self, event: dict):
-        if 'triggerSource' in event and event['triggerSource'] == 'TokenGeneration_HostedAuth':
+    @staticmethod
+    def _is_cognito_trigger_event(event: dict):
+        return 'triggerSource' in event
+
+    def _generate_cognito_trigger_messages(self, event: dict):
+        if event['triggerSource'] == 'TokenGeneration_HostedAuth':
             return self._message_factory.query('firefly_iaaa.GetTokenAccessRights', data={
                 'event': event
             })
