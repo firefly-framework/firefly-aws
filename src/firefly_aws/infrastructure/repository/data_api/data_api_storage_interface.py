@@ -113,16 +113,22 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             t = 'isNull'
             val = True
         elif type_ == 'float' or type_ is float:
+            val = float(val)
             t = 'doubleValue'
         elif type_ == 'int' or type_ is int:
+            val = int(val)
             t = 'longValue'
         elif type_ == 'bool' or type_ is bool:
+            val = bool(val)
             t = 'booleanValue'
         elif type_ == 'bytes' or type_ is bytes:
             t = 'blobValue'
         elif type_ == 'datetime' or type_ is datetime:
             val = str(val).replace('T', ' ')
             th = 'TIMESTAMP'
+        else:
+            val = str(val)
+
         ret = {'name': name, 'value': {t: val}}
         if th is not None:
             ret['typeHint'] = th
