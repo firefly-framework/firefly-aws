@@ -39,6 +39,7 @@ class CognitoAuthenticator(ff.Handler, ff.LoggerAware):
 
             self.debug('Decoding token')
             claims = self._jwt_decoder.decode(token)
+            self.debug('Result from decode: %s', claims)
             if claims is None:
                 return False
 

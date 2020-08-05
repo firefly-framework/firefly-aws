@@ -108,6 +108,9 @@ class LambdaExecutor(ff.DomainService):
         try:
             self.info(f'Trying to match route: "{method} {route}"')
             endpoint, params = self._rest_router.match(route, method)
+            if not endpoint:
+                return {'statusCode': 404}
+
             if endpoint.message is not None:
                 message_name = endpoint.message if isinstance(endpoint.message, str) else endpoint.message.get_fqn()
             else:
@@ -189,7 +192,7 @@ class LambdaExecutor(ff.DomainService):
         return 'triggerSource' in event
 
     def _generate_cognito_trigger_messages(self, event: dict):
-        if event['triggerSource'] == 'TokenGeneration_HostedAuth':
+        if event['triggerSource'] in ('TokenGeneration_HostedAuth', 'TokenGeneration_RefreshTokens'):
             return self._message_factory.query('firefly_iaaa.GetTokenAccessRights', data={
                 'event': event
             })

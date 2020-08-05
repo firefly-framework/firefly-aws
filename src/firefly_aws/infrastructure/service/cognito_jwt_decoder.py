@@ -20,7 +20,7 @@ import firefly_aws.domain as domain
 from cognitojwt import CognitoJWTException
 
 
-class CognitoJwtDecoder(domain.JwtDecoder):
+class CognitoJwtDecoder(domain.JwtDecoder, ff.LoggerAware):
     _region: str = None
     _user_pool_id: str = None
 
@@ -32,7 +32,9 @@ class CognitoJwtDecoder(domain.JwtDecoder):
                 self._user_pool_id,
                 app_client_id=client_id
             )
-        except KeyError:
+        except KeyError as e:
+            self.exception(e)
             return
-        except CognitoJWTException:
+        except CognitoJWTException as e:
+            self.exception(e)
             raise ff.UnauthenticatedError()
