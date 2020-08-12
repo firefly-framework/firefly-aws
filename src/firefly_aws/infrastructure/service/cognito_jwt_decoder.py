@@ -32,7 +32,7 @@ class CognitoJwtDecoder(domain.JwtDecoder, ff.LoggerAware):
                 self._user_pool_id,
                 app_client_id=client_id
             )
-        except KeyError as e:
+        except (KeyError, ValueError) as e:
             self.exception(e)
             return
         except CognitoJWTException as e:
