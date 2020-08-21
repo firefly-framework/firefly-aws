@@ -11,7 +11,7 @@ class DataApi(ff.LoggerAware):
 
     def execute(self, sql: str, params: list = None):
         params = params or []
-        self.debug('%s - %s', sql, str(params))
+        self.info('%s - %s', sql, str(params))
         return self._rds_data_client.execute_statement(
             resourceArn=self._db_arn,
             secretArn=self._db_secret_arn,

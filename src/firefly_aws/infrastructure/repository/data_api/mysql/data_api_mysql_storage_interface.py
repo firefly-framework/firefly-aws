@@ -142,6 +142,14 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
             params.append(self._generate_param_entry(field_.name, field_.type, getattr(entity, field_.name)))
         return params
 
+    def _generate_insert(self, entity: ff.Entity, part: str = None):
+        t = entity.__class__
+        sql = f"""
+            insert into {self._fqtn(t)} ({self._generate_column_list(t)}) values ({self._generate_value_list(t)})
+            on duplicate key update {self._generate_update_list(entity.__class__)}
+        """
+        return sql, self._generate_parameters(entity, part=part)
+
     def _generate_update_list(self, entity: Type[ffd.Entity]):
         values = ['obj=:obj']
         for index in self.get_indexes(entity):

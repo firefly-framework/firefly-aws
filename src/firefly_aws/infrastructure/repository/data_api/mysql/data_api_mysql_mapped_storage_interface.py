@@ -74,6 +74,14 @@ class DataApiMysqlMappedStorageInterface(DataApiStorageInterface):
         column = f'`{name}`'
         ff.retry(lambda: self._data_api.execute(f"alter table {self._fqtn(entity)} drop column {column}", []))
 
+    def _generate_insert(self, entity: ff.Entity, part: str = None):
+        t = entity.__class__
+        sql = f"""
+            insert into {self._fqtn(t)} ({self._generate_column_list(t)}) values ({self._generate_value_list(t)})
+            on duplicate key update {self._generate_update_list(entity.__class__)}
+        """
+        return sql, self._generate_parameters(entity, part=part)
+
     def _generate_column_list(self, entity: Type[ffd.Entity]):
         if entity not in self._cache['parts']['columns']:
             columns = list(map(lambda f: f'`{f.name}`', self._visible_fields(entity)))
