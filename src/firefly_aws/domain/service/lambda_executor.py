@@ -166,7 +166,7 @@ class LambdaExecutor(ff.DomainService):
         }
 
         if len(body) > 10000000:
-            download_url = self._s3_service.store_download(body)
+            download_url = self._s3_service.store_download(body, apply_compression=False)
             ret['body'] = json.dumps({
                 'location': download_url
             })
