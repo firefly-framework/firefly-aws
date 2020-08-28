@@ -38,10 +38,12 @@ class BotoS3Service(awsd.S3Service, ff.LoggerAware):
             key += '.gz'
             content_encoding = 'gzip'
 
+        key = f'/tmp/{key}'
+
         self._s3_client.put_object(
             Body=data,
             Bucket=self._bucket,
-            Key=f'/tmp/{key}',
+            Key=key,
             Metadata={
                 'ContentEncoding': content_encoding,
             }
