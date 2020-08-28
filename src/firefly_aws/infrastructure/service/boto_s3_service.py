@@ -40,14 +40,17 @@ class BotoS3Service(awsd.S3Service, ff.LoggerAware):
 
         key = f'/tmp/{key}'
 
-        self._s3_client.put_object(
-            Body=data,
-            Bucket=self._bucket,
-            Key=key,
-            Metadata={
+        params = {
+            'Body': data,
+            'Bucket': self._bucket,
+            'Key': key,
+        }
+        if content_encoding is not None:
+            params['Metadata'] = {
                 'ContentEncoding': content_encoding,
             }
-        )
+
+        self._s3_client.put_object(**params)
 
         return self._s3_client.generate_presigned_url(
             'get_object', Params={'Bucket': self._bucket, 'Key': key}
