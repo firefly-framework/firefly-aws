@@ -18,4 +18,6 @@ from abc import ABC, abstractmethod
 
 
 class S3Service(ABC):
-    pass
+    @abstractmethod
+    def store_download(self, data: str, extension: str = None, file_name: str = None, apply_compression: bool = True):
+        pass

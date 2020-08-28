@@ -14,6 +14,9 @@
 
 from __future__ import annotations
 
+import gzip
+import uuid
+
 import firefly as ff
 import firefly_aws.domain as awsd
 from botocore.exceptions import ClientError
@@ -22,3 +25,28 @@ from botocore.exceptions import ClientError
 class BotoS3Service(awsd.S3Service, ff.LoggerAware):
     _configuration: ff.Configuration = None
     _s3_client = None
+    _bucket: str = None
+
+    def store_download(self, data: str, extension: str = None, file_name: str = None, apply_compression: bool = True):
+        key = file_name if file_name is not None else str(uuid.uuid4())
+        content_encoding = None
+        if extension is not None:
+            key += f".{extension}"
+
+        if apply_compression:
+            data = gzip.compress(data.encode('utf-8'))
+            key += '.gz'
+            content_encoding = 'gzip'
+
+        self._s3_client.put_object(
+            Body=data,
+            Bucket=self._bucket,
+            Key=f'/tmp/{key}',
+            Metadata={
+                'ContentEncoding': content_encoding,
+            }
+        )
+
+        return self._s3_client.generate_presigned_url(
+            'get_object', Params={'Bucket': self._bucket, 'Key': key}
+        )

@@ -21,6 +21,7 @@ from pprint import pprint
 from typing import Union
 
 import firefly as ff
+import firefly_aws.domain as domain
 
 
 STATUS_CODES = {
@@ -43,6 +44,7 @@ class LambdaExecutor(ff.DomainService):
     _message_factory: ff.MessageFactory = None
     _rest_router: ff.RestRouter = None
     _s3_client = None
+    _s3_service: domain.S3Service = None
     _bucket: str = None
 
     def __init__(self):
@@ -155,12 +157,22 @@ class LambdaExecutor(ff.DomainService):
     def _handle_http_response(self, response: any, status_code: int = 200, headers: dict = None):
         headers = headers or {}
         headers.update(ACCESS_CONTROL_HEADERS)
+        body = self._serializer.serialize(response)
         ret = {
             'statusCode': status_code,
             'headers': headers,
-            'body': self._serializer.serialize(response),
+            'body': body,
             'isBase64Encoded': False,
         }
+
+        if len(body) > 10000000:
+            download_url = self._s3_service.store_download(body)
+            ret['body'] = json.dumps({
+                'location': download_url
+            })
+            ret['statusCode'] = 303
+            ret['headers']['Location'] = download_url
+
         self.info(f'Proxy Response: %s', ret)
         return ret
 
