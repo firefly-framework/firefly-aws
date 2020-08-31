@@ -20,6 +20,8 @@ import boto3
 import firefly_di as di
 
 import firefly as ff
+from jinjasql import JinjaSql
+
 import firefly_aws.infrastructure as infra
 import firefly_aws.domain as domain
 
@@ -38,6 +40,7 @@ class Container(di.Container):
     s3_service: infra.BotoS3Service = infra.BotoS3Service
     lambda_executor: domain.LambdaExecutor = domain.LambdaExecutor
     jwt_decoder: domain.JwtDecoder = infra.CognitoJwtDecoder
+    jinjasql: JinjaSql = lambda self: JinjaSql(param_style='named')
 
 
 if os.environ['ENV'] != 'local':

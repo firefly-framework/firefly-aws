@@ -17,6 +17,8 @@ setuptools.setup(
         'dateparser>=0.7.4',
         'firefly-dependency-injection>=1.0.0',
         'firefly-framework>=1.0.26',
+        'Jinja2>=2.11.1',
+        'jinjasql>=0.1.8',
         'requests>=2.23.0',
         'troposphere>=2.6.1',
     ],
