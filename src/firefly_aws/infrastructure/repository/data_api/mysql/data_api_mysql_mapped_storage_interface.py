@@ -20,11 +20,14 @@ from typing import Type
 import firefly as ff
 from firefly import domain as ffd
 
-from ..data_api_storage_interface import DataApiStorageInterface
+from .data_api_mysql_base import DataApiMysqlBase
 
 
 # noinspection PyDataclass
-class DataApiMysqlMappedStorageInterface(DataApiStorageInterface):
+class DataApiMysqlMappedStorageInterface(DataApiMysqlBase):
+    _sql_prefix = 'mysql'
+    _identifier_quote_char = '`'
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 

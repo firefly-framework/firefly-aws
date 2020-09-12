@@ -18,17 +18,20 @@ from abc import ABC, abstractmethod
 from dataclasses import fields
 from datetime import datetime
 from math import floor
-from typing import Type
+from typing import Type, Union
 
 import firefly as ff
 import firefly.infrastructure as ffi
 from botocore.exceptions import ClientError
+import firefly_aws.domain as domain
 from firefly import domain as ffd
+from firefly.infrastructure.repository.rdb_repository import Column
 
 from firefly_aws.infrastructure.service.data_api import DataApi
 
 
 class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
+    _registry: ff.Registry = None
     _cache: dict = None
     _rds_data_client = None
     _serializer: ffi.JsonSerializer = None
@@ -43,143 +46,131 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         pass
 
     def _add(self, entity: ff.Entity):
-        sql, params = self._generate_insert(entity)
-        ff.retry(lambda: self._data_api.execute(sql, params))
+        try:
+            return self._execute(*self._generate_query(
+                entity,
+                f'{self._sql_prefix}/insert.sql',
+                {'data': self._data_fields(entity)}
+            ))
+        except domain.DocumentTooLarge:
+            self._insert_large_document(entity)
 
-    def _all(self, entity_type: Type[ff.Entity], criteria: ff.BinaryOp = None, limit: int = None):
-        sql = f"select {self._generate_select_list(entity_type)} from {self._fqtn(entity_type)}"
-        params = []
+    def _insert_large_document(self, entity: ff.Entity, update: bool = False):
+        obj = self._serializer.serialize(entity.to_dict(force_all=True))
+        n = self._size_limit * 1024
+        first = True
+        for chunk in [obj[i:i+n] for i in range(0, len(obj), n)]:
+            if first:
+                if update:
+                    self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
+                        'data': {'document': chunk},
+                        'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
+                    }))
+                else:
+                    self._execute(*self._generate_query(entity, f'{self._sql_prefix}/insert.sql', {
+                        'data': {
+                            entity.id_name(): entity.id_value(),
+                            'document': chunk
+                        },
+                        'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
+                    }))
+                first = False
+            else:
+                sql = f"update {self._fqtn(entity.__class__)} set document = CONCAT(obj, :str) where id = :id"
+                params = [
+                    {'name': 'id', 'value': {'stringValue': entity.id_value()}},
+                    {'name': 'str', 'value': {'stringValue': chunk}},
+                ]
+                self._execute(sql, params)
+
+    def _all(self, entity_type: Type[ff.Entity], criteria: ff.BinaryOp = None, limit: int = None, offset: int = None):
+        params = {
+            'columns': self._select_list(entity_type),
+        }
         if criteria is not None:
-            clause, params = self._generate_where_clause(criteria)
-            sql = f'{sql} {clause}'
+            params['criteria'] = criteria
 
         if limit is not None:
-            sql += f" limit {limit}"
+            params['limit'] = limit
 
-        return self._paginate(sql, params, entity_type)
+        if offset is not None:
+            params['offset'] = offset
+
+        sql, params = self._generate_query(entity_type, f'{self._sql_prefix}/select.sql', params)
+        try:
+            return list(map(lambda d: self._build_entity(entity_type, d), self._execute(sql, params)['records']))
+        except ClientError as e:
+            if 'Database returned more than the allowed response size limit' in str(e):
+                return self._fetch_multiple_large_documents(sql, params, entity_type)
+            raise e
+
+    def _fetch_multiple_large_documents(self, sql: str, params: list, entity: Type[ff.Entity]):
+        ret = []
+        sql = sql.replace('select obj', 'select id')
+        result = ff.retry(lambda: self._data_api.execute(sql, params))
+        for row in result['records']:
+            ret.append(self._fetch_large_document(row[0]['stringValue'], entity))
+        return ret
+
+    def _fetch_large_document(self, id_: str, entity: Type[ff.Entity]):
+        n = self._size_limit * 1024
+        start = 1
+        document = ''
+        while True:
+            sql, params = self._generate_query(entity, f'{self._sql_prefix}/select.sql', {
+                'columns': [f'SUBSTR(obj, {start}, {n}) as obj'],
+            })
+            result = self._execute(sql, params)
+            document += result['records'][0][0]['stringValue']
+            if len(result['records'][0][0]['stringValue']) < n:
+                break
+            start += n
+
+        return entity.from_dict(self._serializer.deserialize(document))
 
     def _find(self, uuid: str, entity_type: Type[ff.Entity]):
-        sql = f"select {self._generate_select_list(entity_type)} from {self._fqtn(entity_type)} where id = :id"
-        params = [{'name': 'id', 'value': {'stringValue': uuid}}]
-        result = ff.retry(
-            lambda: self._data_api.execute(sql, params),
-            should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
-        )
+        params = {
+            'columns': self._select_list(entity_type),
+            'criteria': ffd.Attr(entity_type.id_name()) == uuid,
+        }
+
+        try:
+            result = self._execute(*self._generate_query(entity_type, f'{self._sql_prefix}/select.sql', params))
+        except ClientError as e:
+            if 'Database returned more than the allowed response size limit' in str(e):
+                return self._fetch_large_document(uuid, entity_type)
+            raise e
+
         if len(result['records']) == 0:
             return None
+
+        if len(result['records']) > 1:
+            raise ffd.MultipleResultsFound()
 
         return self._build_entity(entity_type, result['records'][0])
 
     def _remove(self, entity: ff.Entity):
-        sql = f"delete from {self._fqtn(entity.__class__)} where id = :id"
-        params = [
-            {'name': 'id', 'value': {'stringValue': entity.id_value()}},
-        ]
-        ff.retry(lambda: self._data_api.execute(sql, params))
+        return self._execute(*self._generate_query(
+            entity,
+            f'{self._sql_prefix}/delete.sql',
+            {'criteria': ffd.Attr(entity.id_name()) == entity.id_value()}
+        ))
 
     def _update(self, entity: ff.Entity):
-        sql, params = self._generate_update(entity)
-        ff.retry(lambda: self._data_api.execute(sql, params))
-
-    def _generate_insert(self, entity: ff.Entity, part: str = None):
-        t = entity.__class__
-        sql = f"insert into {self._fqtn(t)} ({self._generate_column_list(t)}) values ({self._generate_value_list(t)})"
-        return sql, self._generate_parameters(entity, part=part)
-
-    def _generate_update(self, entity: ff.Entity, part: str = None):
-        t = entity.__class__
-        sql = f"update {self._fqtn(t)} set {self._generate_update_list(t)} where id = :id"
-        return sql, self._generate_parameters(entity, part=part)
-
-    def _get_indexes(self, entity: Type[ff.Entity]):
-        if entity not in self._cache['indexes']:
-            self._cache['indexes'][entity] = []
-            for field_ in fields(entity):
-                if 'index' in field_.metadata and field_.metadata['index'] is True:
-                    self._cache['indexes'][entity].append(field_)
-
-        return self._cache['indexes'][entity]
-
-    def _add_index_params(self, entity: ff.Entity, params: list):
-        for field_ in self._get_indexes(entity.__class__):
-            params.append(self._generate_param_entry(field_.name, field_.type, getattr(entity, field_.name)))
-        return params
-
-    @staticmethod
-    def _generate_param_entry(name: str, type_: str, val: any):
-        t = 'stringValue'
-        th = None
-        if val is None:
-            t = 'isNull'
-            val = True
-        elif type_ == 'float' or type_ is float:
-            val = float(val)
-            t = 'doubleValue'
-        elif type_ == 'int' or type_ is int:
-            val = int(val)
-            t = 'longValue'
-        elif type_ == 'bool' or type_ is bool:
-            val = bool(val)
-            t = 'booleanValue'
-        elif type_ == 'bytes' or type_ is bytes:
-            t = 'blobValue'
-        elif type_ == 'datetime' or type_ is datetime:
-            val = str(val).replace('T', ' ')
-            th = 'TIMESTAMP'
-        else:
-            val = str(val)
-
-        ret = {'name': name, 'value': {t: val}}
-        if th is not None:
-            ret['typeHint'] = th
-        return ret
-
-    def _generate_index(self, name: str):
-        return f'INDEX idx_{name} (`{name}`)'
-
-    def _generate_extra(self, columns: list, indexes: list):
-        return f", {','.join(columns)}, {','.join(indexes)}"
+        try:
+            return self._execute(*self._generate_query(
+                entity,
+                f'{self._sql_prefix}/update.sql',
+                {
+                    'data': self._data_fields(entity),
+                    'criteria': ffd.Attr(entity.id_name()) == entity.id_value()
+                }
+            ))
+        except domain.DocumentTooLarge:
+            self._insert_large_document(entity, update=True)
 
     def _ensure_connected(self):
         return True
-
-    def _generate_where_clause(self, criteria: ff.BinaryOp):
-        if criteria is None:
-            return '', []
-
-        clause, params = criteria.to_sql()
-        ret = []
-        for k, v in params.items():
-            ret.append(self._generate_param_entry(k, type(v), v))
-        return f'where {clause}', ret
-
-    def _execute_ddl(self, entity: Type[ffd.Entity]):
-        self._data_api.execute(f"create database if not exists {entity.get_class_context()}", [])
-        self._data_api.execute(self._generate_create_table(entity), [])
-
-        table_indexes = self._get_table_indexes(entity)
-        indexes = self._get_indexes(entity)
-        index_names = [f.name for f in indexes]
-
-        for table_index in table_indexes:
-            if table_index not in index_names:
-                self._drop_table_index(entity, table_index)
-
-        for index in index_names:
-            if index not in table_indexes:
-                self._add_table_index(entity, list(filter(lambda f: f.name == index, indexes))[0])
-
-    @abstractmethod
-    def _get_table_indexes(self, entity: Type[ffd.Entity]):
-        pass
-
-    @abstractmethod
-    def _add_table_index(self, entity: Type[ffd.Entity], field_):
-        pass
-
-    @abstractmethod
-    def _drop_table_index(self, entity: Type[ffd.Entity], name: str):
-        pass
 
     def _get_result_count(self, sql: str, params: list):
         count_sql = f"select count(*) from ({sql}) a"
@@ -223,12 +214,72 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
                                      not in str(err)
         )['records']
 
-    @abstractmethod
-    def _get_average_row_size(self, entity: Type[ff.Entity]):
-        """
-        Retrieve the average row size in KB
+    def _get_table_columns(self, entity: Type[ffd.Entity]):
+        result = self._execute(*self._generate_query(entity, 'mysql/get_columns.sql'))
+        ret = []
+        if result:
+            for row in result['records']:
+                ret.append(Column(name=list(row[0].values())[0], type=list(row[1].values())[0]))
+        return ret
 
-        :param entity:
-        :return:
-        """
-        pass
+    def _build_entity(self, entity: Type[ffd.Entity], data, raw: bool = False):
+        if raw is True:
+            return self._serializer.deserialize(data[0]['stringValue'])
+        data = self._serializer.deserialize(data[0]['stringValue'])
+        for k, v in self._get_relationships(entity).items():
+            if v['this_side'] == 'one':
+                data[k] = self._registry(v['target']).find(data[k])
+            elif v['this_side'] == 'many':
+                data[k] = self._registry(v['target']).filter(
+                    lambda ee: getattr(ee, v['target'].id_column()).is_in(data[k])
+                )
+        return entity.from_dict(data)
+
+    def _get_average_row_size(self, entity: Type[ff.Entity]):
+        result = self._execute(f"select CEIL(AVG(LENGTH(obj))) from {self._fqtn(entity)}")
+        try:
+            return result['records'][0][0]['longValue'] / 1024
+        except KeyError:
+            return 1
+
+    @staticmethod
+    def _generate_param_entry(name: str, type_: str, val: any):
+        t = 'stringValue'
+        th = None
+        if val is None:
+            t = 'isNull'
+            val = True
+        elif type_ == 'float' or type_ is float:
+            val = float(val)
+            t = 'doubleValue'
+        elif type_ == 'int' or type_ is int:
+            val = int(val)
+            t = 'longValue'
+        elif type_ == 'bool' or type_ is bool:
+            val = bool(val)
+            t = 'booleanValue'
+        elif type_ == 'bytes' or type_ is bytes:
+            t = 'blobValue'
+        elif type_ == 'datetime' or type_ is datetime:
+            val = str(val).replace('T', ' ')
+            th = 'TIMESTAMP'
+        else:
+            val = str(val)
+
+        ret = {'name': name, 'value': {t: val}}
+        if th is not None:
+            ret['typeHint'] = th
+        return ret
+
+    def _execute(self, sql: str, params: Union[dict, list] = None):
+        if isinstance(params, dict):
+            converted = []
+            for k, v in params.items():
+                converted.append(self._generate_param_entry(k, type(v), v))
+            params = converted
+
+        # return ff.retry(
+        #     lambda: self._data_api.execute(sql, params),
+        #     should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
+        # )
+        return self._data_api.execute(sql, params)
