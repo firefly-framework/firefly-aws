@@ -36,11 +36,21 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
     _rds_data_client = None
     _serializer: ffi.JsonSerializer = None
     _data_api: DataApi = None
-    _size_limit: int = 1000  # In KB
+    _size_limit_kb: int = 1024
+    _db_arn: str = None
+    _db_secret_arn: str = None
+    _db_name: str = None
 
-    def __init__(self, **kwargs):
+    def __init__(self, db_arn: str = None, db_secret_arn: str = None, db_name: str = None, **kwargs):
         super().__init__(**kwargs)
         self._select_limits = {}
+
+        if db_arn is not None:
+            self._db_arn = db_arn
+        if db_secret_arn is not None:
+            self._db_secret_arn = db_secret_arn
+        if db_name is not None:
+            self._db_name = db_name
 
     def _disconnect(self):
         pass
@@ -56,8 +66,8 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             self._insert_large_document(entity)
 
     def _insert_large_document(self, entity: ff.Entity, update: bool = False):
-        obj = self._serializer.serialize(entity.to_dict(force_all=True))
-        n = self._size_limit * 1024
+        obj = self._serialize_entity(entity)
+        n = self._size_limit_kb * 1024
         first = True
         for chunk in [obj[i:i+n] for i in range(0, len(obj), n)]:
             if first:
@@ -107,13 +117,13 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
     def _fetch_multiple_large_documents(self, sql: str, params: list, entity: Type[ff.Entity]):
         ret = []
         sql = sql.replace('select obj', 'select id')
-        result = ff.retry(lambda: self._data_api.execute(sql, params))
+        result = ff.retry(lambda: self._execute(sql, params))
         for row in result['records']:
             ret.append(self._fetch_large_document(row[0]['stringValue'], entity))
         return ret
 
     def _fetch_large_document(self, id_: str, entity: Type[ff.Entity]):
-        n = self._size_limit * 1024
+        n = self._size_limit_kb * 1024
         start = 1
         document = ''
         while True:
@@ -174,7 +184,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
 
     def _get_result_count(self, sql: str, params: list):
         count_sql = f"select count(*) from ({sql}) a"
-        result = ff.retry(lambda: self._data_api.execute(count_sql, params))
+        result = ff.retry(lambda: self._execute(count_sql, params))
         return result['records'][0][0]['longValue']
 
     def _paginate(self, sql: str, params: list, entity: Type[ff.Entity], raw: bool = False):
@@ -182,14 +192,14 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             self._select_limits[entity.__name__] = self._get_average_row_size(entity)
             if self._select_limits[entity.__name__] == 0:
                 self._select_limits[entity.__name__] = 1
-        limit = floor(self._size_limit / self._select_limits[entity.__name__])
+        limit = floor(self._size_limit_kb / self._select_limits[entity.__name__])
         offset = 0
 
         ret = []
         while True:
             try:
                 result = ff.retry(
-                    lambda: self._data_api.execute(f'{sql} limit {limit} offset {offset}', params),
+                    lambda: self._execute(f'{sql} limit {limit} offset {offset}', params),
                     should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
                 )
             except ClientError as e:
@@ -209,7 +219,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
 
     def _load_query_results(self, sql: str, params: list, limit: int, offset: int):
         return ff.retry(
-            lambda: self._data_api.execute(f'{sql} limit {limit} offset {offset}', params),
+            lambda: self._execute(f'{sql} limit {limit} offset {offset}', params),
             should_retry=lambda err: 'Database returned more than the allowed response size limit'
                                      not in str(err)
         )['records']
@@ -231,7 +241,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
                 data[k] = self._registry(v['target']).find(data[k])
             elif v['this_side'] == 'many':
                 data[k] = self._registry(v['target']).filter(
-                    lambda ee: getattr(ee, v['target'].id_column()).is_in(data[k])
+                    lambda ee: getattr(ee, v['target'].id_name()).is_in(data[k])
                 )
         return entity.from_dict(data)
 
@@ -282,4 +292,10 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         #     lambda: self._data_api.execute(sql, params),
         #     should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
         # )
-        return self._data_api.execute(sql, params)
+        return self._data_api.execute(
+            sql,
+            params,
+            db_arn=self._db_arn,
+            db_secret_arn=self._db_secret_arn,
+            db_name=self._db_name
+        )
