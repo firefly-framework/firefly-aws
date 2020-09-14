@@ -24,6 +24,7 @@ class DataApi(ff.LoggerAware):
             resourceArn=(db_arn or self._db_arn),
             secretArn=(db_secret_arn or self._db_secret_arn),
             database=(db_name or self._db_name),
+            includeResultMetadata=True,
             sql=sql,
             parameters=params
         )

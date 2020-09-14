@@ -56,17 +56,23 @@ def test_aggregate_associations(index, user_repositories, role_repositories, sco
     roles.migrate_schema()
     scopes.migrate_schema()
 
-    scopes.append(Scope(id='foo.admin'))
-    scopes.append(Scope(id='bar.admin'))
-    scopes.append(Scope(id='foo.Baz.write'))
+    my_scopes = [
+        Scope(id='foo.admin'),
+        Scope(id='bar.admin'),
+        Scope(id='foo.Baz.write'),
+    ]
+    list(map(lambda s: scopes.append(s), my_scopes))
     scopes.commit()
 
-    roles.append(Role(name='Foo Admin', scopes=[scopes[0]]))
-    roles.append(Role(name='Bar Admin', scopes=[scopes[1]]))
-    roles.append(Role(name='Super Admin', scopes=[scopes[0], scopes[1]]))
+    my_roles = [
+        Role(name='Foo Admin', scopes=[my_scopes[0]]),
+        Role(name='Bar Admin', scopes=[my_scopes[1]]),
+        Role(name='Super Admin', scopes=[my_scopes[0], my_scopes[1]]),
+    ]
+    list(map(lambda r: roles.append(r), my_roles))
     roles.commit()
 
-    users.append(IamUser(id='john', name='John Doe', email='john@doe.com', roles=[roles[0]]))
+    users.append(IamUser(id='john', name='John Doe', email='john@doe.com', roles=[my_roles[0]]))
     users.commit()
 
     john = users.find('john')

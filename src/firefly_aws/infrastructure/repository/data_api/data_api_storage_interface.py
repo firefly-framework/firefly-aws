@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from dataclasses import fields
 from datetime import datetime
 from math import floor
-from typing import Type, Union
+from typing import Type, Union, Tuple
 
 import firefly as ff
 import firefly.infrastructure as ffi
@@ -55,16 +55,6 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
     def _disconnect(self):
         pass
 
-    def _add(self, entity: ff.Entity):
-        try:
-            return self._execute(*self._generate_query(
-                entity,
-                f'{self._sql_prefix}/insert.sql',
-                {'data': self._data_fields(entity)}
-            ))
-        except domain.DocumentTooLarge:
-            self._insert_large_document(entity)
-
     def _insert_large_document(self, entity: ff.Entity, update: bool = False):
         obj = self._serialize_entity(entity)
         n = self._size_limit_kb * 1024
@@ -93,27 +83,6 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
                 ]
                 self._execute(sql, params)
 
-    def _all(self, entity_type: Type[ff.Entity], criteria: ff.BinaryOp = None, limit: int = None, offset: int = None):
-        params = {
-            'columns': self._select_list(entity_type),
-        }
-        if criteria is not None:
-            params['criteria'] = criteria
-
-        if limit is not None:
-            params['limit'] = limit
-
-        if offset is not None:
-            params['offset'] = offset
-
-        sql, params = self._generate_query(entity_type, f'{self._sql_prefix}/select.sql', params)
-        try:
-            return list(map(lambda d: self._build_entity(entity_type, d), self._execute(sql, params)['records']))
-        except ClientError as e:
-            if 'Database returned more than the allowed response size limit' in str(e):
-                return self._fetch_multiple_large_documents(sql, params, entity_type)
-            raise e
-
     def _fetch_multiple_large_documents(self, sql: str, params: list, entity: Type[ff.Entity]):
         ret = []
         sql = sql.replace('select obj', 'select id')
@@ -137,47 +106,6 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             start += n
 
         return entity.from_dict(self._serializer.deserialize(document))
-
-    def _find(self, uuid: str, entity_type: Type[ff.Entity]):
-        params = {
-            'columns': self._select_list(entity_type),
-            'criteria': ffd.Attr(entity_type.id_name()) == uuid,
-        }
-
-        try:
-            result = self._execute(*self._generate_query(entity_type, f'{self._sql_prefix}/select.sql', params))
-        except ClientError as e:
-            if 'Database returned more than the allowed response size limit' in str(e):
-                return self._fetch_large_document(uuid, entity_type)
-            raise e
-
-        if len(result['records']) == 0:
-            return None
-
-        if len(result['records']) > 1:
-            raise ffd.MultipleResultsFound()
-
-        return self._build_entity(entity_type, result['records'][0])
-
-    def _remove(self, entity: ff.Entity):
-        return self._execute(*self._generate_query(
-            entity,
-            f'{self._sql_prefix}/delete.sql',
-            {'criteria': ffd.Attr(entity.id_name()) == entity.id_value()}
-        ))
-
-    def _update(self, entity: ff.Entity):
-        try:
-            return self._execute(*self._generate_query(
-                entity,
-                f'{self._sql_prefix}/update.sql',
-                {
-                    'data': self._data_fields(entity),
-                    'criteria': ffd.Attr(entity.id_name()) == entity.id_value()
-                }
-            ))
-        except domain.DocumentTooLarge:
-            self._insert_large_document(entity, update=True)
 
     def _ensure_connected(self):
         return True
@@ -228,14 +156,14 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         result = self._execute(*self._generate_query(entity, 'mysql/get_columns.sql'))
         ret = []
         if result:
-            for row in result['records']:
-                ret.append(Column(name=list(row[0].values())[0], type=list(row[1].values())[0]))
+            for row in result:
+                ret.append(Column(name=row['COLUMN_NAME'], type=row['COLUMN_TYPE']))
         return ret
 
     def _build_entity(self, entity: Type[ffd.Entity], data, raw: bool = False):
         if raw is True:
-            return self._serializer.deserialize(data[0]['stringValue'])
-        data = self._serializer.deserialize(data[0]['stringValue'])
+            return self._serializer.deserialize(data['document'])
+        data = self._serializer.deserialize(data['document'])
         for k, v in self._get_relationships(entity).items():
             if v['this_side'] == 'one':
                 data[k] = self._registry(v['target']).find(data[k])
@@ -292,10 +220,23 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         #     lambda: self._data_api.execute(sql, params),
         #     should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
         # )
-        return self._data_api.execute(
+        result = self._data_api.execute(
             sql,
             params,
             db_arn=self._db_arn,
             db_secret_arn=self._db_secret_arn,
             db_name=self._db_name
         )
+
+        if 'records' in result:
+            ret = []
+            for row in result['records']:
+                counter = 0
+                d = {}
+                for data in result['columnMetadata']:
+                    d[data['name']] = list(row[counter].values())[0]
+                    counter += 1
+                ret.append(d)
+            return ret
+        else:
+            return result
