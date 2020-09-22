@@ -144,12 +144,8 @@ tables = ['todo.todo_lists', 'iam.users', 'iam.roles', 'iam.scopes']
 
 
 @pytest.fixture(scope='function', autouse=True)
-def drop_tables(container):
-    for k, v in services.items():
-        for table in tables:
-            container.data_api.execute(
-                f"drop table if exists {table}",
-                db_arn=v['connection']['db_arn'],
-                db_secret_arn=v['connection']['db_secret_arn'],
-                db_name=v['connection']['db_name']
-            )
+def drop_tables(todo_repositories, user_repositories, role_repositories, scope_repositories):
+    list(todo_repositories.values())[0].destroy()
+    list(user_repositories.values())[0].destroy()
+    list(role_repositories.values())[0].destroy()
+    list(scope_repositories.values())[0].destroy()

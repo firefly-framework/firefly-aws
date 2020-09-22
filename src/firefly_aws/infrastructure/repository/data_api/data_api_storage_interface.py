@@ -14,16 +14,15 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import fields
+from abc import ABC
 from datetime import datetime
 from math import floor
-from typing import Type, Union, Tuple
+from pprint import pprint
+from typing import Type, Union
 
 import firefly as ff
 import firefly.infrastructure as ffi
 from botocore.exceptions import ClientError
-import firefly_aws.domain as domain
 from firefly import domain as ffd
 from firefly.infrastructure.repository.rdb_repository import Column
 
@@ -31,7 +30,6 @@ from firefly_aws.infrastructure.service.data_api import DataApi
 
 
 class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
-    _registry: ff.Registry = None
     _cache: dict = None
     _rds_data_client = None
     _serializer: ffi.JsonSerializer = None
@@ -153,25 +151,12 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         )['records']
 
     def _get_table_columns(self, entity: Type[ffd.Entity]):
-        result = self._execute(*self._generate_query(entity, 'mysql/get_columns.sql'))
+        result = self._execute(*self._generate_query(entity, f'{self._sql_prefix}/get_columns.sql'))
         ret = []
         if result:
             for row in result:
                 ret.append(Column(name=row['COLUMN_NAME'], type=row['COLUMN_TYPE']))
         return ret
-
-    def _build_entity(self, entity: Type[ffd.Entity], data, raw: bool = False):
-        if raw is True:
-            return self._serializer.deserialize(data['document'])
-        data = self._serializer.deserialize(data['document'])
-        for k, v in self._get_relationships(entity).items():
-            if v['this_side'] == 'one':
-                data[k] = self._registry(v['target']).find(data[k])
-            elif v['this_side'] == 'many':
-                data[k] = self._registry(v['target']).filter(
-                    lambda ee: getattr(ee, v['target'].id_name()).is_in(data[k])
-                )
-        return entity.from_dict(data)
 
     def _get_average_row_size(self, entity: Type[ff.Entity]):
         result = self._execute(f"select CEIL(AVG(LENGTH(obj))) from {self._fqtn(entity)}")
@@ -233,6 +218,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             for row in result['records']:
                 counter = 0
                 d = {}
+
                 for data in result['columnMetadata']:
                     d[data['name']] = list(row[counter].values())[0]
                     counter += 1

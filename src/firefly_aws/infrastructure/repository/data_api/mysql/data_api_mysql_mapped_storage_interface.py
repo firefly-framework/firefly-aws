@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import fields
-from typing import Type, get_type_hints
+from typing import Type, get_type_hints, List, Dict
 
 import firefly as ff
 from firefly import domain as ffd
@@ -46,38 +46,3 @@ class DataApiMysqlMappedStorageInterface(DataApiMysqlBase):
             return result['records'][0][0]['longValue'] / 1024
         except KeyError:
             return 1
-
-    def _build_entity(self, entity: Type[ffd.Entity], data, raw: bool = False):
-        params = {}
-        annotations_ = get_type_hints(entity)
-
-        for i, field_ in enumerate(self._visible_fields(entity)):
-            type_ = field_.type
-            if 'isNull' in data[i]:
-                params[field_.name] = None
-                continue
-            elif type_ == 'float' or type_ is float:
-                t = 'doubleValue'
-            elif type_ == 'int' or type_ is int:
-                t = 'longValue'
-            elif type_ == 'bool' or type_ is bool:
-                t = 'booleanValue'
-            elif type_ == 'bytes' or type_ is bytes:
-                t = 'blobValue'
-            else:
-                t = 'stringValue'
-
-            params[field_.name] = data[i][t]
-            type_ = annotations_[field_.name]
-            if (inspect.isclass(type_) and issubclass(type_, ffd.ValueObject)) or \
-                    ffd.is_type_hint(type_):
-                params[field_.name] = self._serializer.deserialize(params[field_.name])
-
-        if raw:
-            return params
-
-        return entity.from_dict(params)
-
-    @staticmethod
-    def _visible_fields(entity: Type[ffd.Entity]):
-        return list(filter(lambda f: 'hidden' not in f.metadata, fields(entity)))

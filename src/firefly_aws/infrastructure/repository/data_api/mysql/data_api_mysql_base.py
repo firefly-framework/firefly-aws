@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from typing import Type, Union, Tuple
+from typing import Type, Union, Tuple, Callable
 
 import firefly.domain as ffd
 import firefly.infrastructure as ffi
@@ -49,21 +49,13 @@ class DataApiMysqlBase(DataApiStorageInterface, ffi.LegacyStorageInterface, ABC)
                 return self._fetch_multiple_large_documents(sql, params, entity_type)
             raise e
 
-    def _find(self, uuid: str, entity_type: Type[ff.Entity]):
+    def _find(self, uuid: Union[str, Callable], entity_type: Type[ffd.Entity]):
         try:
-            results = super()._find(uuid, entity_type)
+            return super()._find(uuid, entity_type)
         except ClientError as e:
             if 'Database returned more than the allowed response size limit' in str(e):
                 return self._fetch_large_document(uuid, entity_type)
             raise e
-
-        if len(results) == 0:
-            return None
-
-        if len(results) > 1:
-            raise ff.MultipleResultsFound()
-
-        return self._build_entity(entity_type, results[0])
 
     def _remove(self, entity: ffd.Entity):
         return super()._remove(entity)
