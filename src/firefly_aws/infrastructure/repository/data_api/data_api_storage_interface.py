@@ -18,13 +18,14 @@ from abc import ABC
 from datetime import datetime
 from math import floor
 from pprint import pprint
-from typing import Type, Union
+from typing import Type, Union, Callable, Tuple
 
 import firefly as ff
 import firefly.infrastructure as ffi
 from botocore.exceptions import ClientError
 from firefly import domain as ffd
 from firefly.infrastructure.repository.rdb_repository import Column
+import firefly_aws.domain as domain
 
 from firefly_aws.infrastructure.service.data_api import DataApi
 
@@ -49,6 +50,43 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             self._db_secret_arn = db_secret_arn
         if db_name is not None:
             self._db_name = db_name
+
+    def _add(self, entity: ffd.Entity):
+        try:
+            return super()._add(entity)
+        except domain.DocumentTooLarge:
+            self._insert_large_document(entity)
+
+    def _all(self, entity_type: Type[ffd.Entity], criteria: ffd.BinaryOp = None, limit: int = None, offset: int = None,
+             sort: Tuple[Union[str, Tuple[str, bool]]] = None, raw: bool = False, count: bool = False):
+        try:
+            return super()._all(
+                entity_type, criteria, limit=limit, offset=offset, sort=sort, raw=raw, count=count
+            )
+        except ClientError as e:
+            if 'Database returned more than the allowed response size limit' in str(e):
+                query = self._generate_select(
+                    entity_type, criteria, limit=limit, offset=offset, sort=sort, count=count
+                )
+                return self._fetch_multiple_large_documents(query[0], query[1], entity_type)
+            raise e
+
+    def _find(self, uuid: Union[str, Callable], entity_type: Type[ffd.Entity]):
+        try:
+            return super()._find(uuid, entity_type)
+        except ClientError as e:
+            if 'Database returned more than the allowed response size limit' in str(e):
+                return self._fetch_large_document(uuid, entity_type)
+            raise e
+
+    def _remove(self, entity: ffd.Entity):
+        return super()._remove(entity)
+
+    def _update(self, entity: ffd.Entity):
+        try:
+            return super()._update(entity)
+        except domain.DocumentTooLarge:
+            self._insert_large_document(entity, update=True)
 
     def _disconnect(self):
         pass
@@ -149,14 +187,6 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             should_retry=lambda err: 'Database returned more than the allowed response size limit'
                                      not in str(err)
         )['records']
-
-    def _get_table_columns(self, entity: Type[ffd.Entity]):
-        result = self._execute(*self._generate_query(entity, f'{self._sql_prefix}/get_columns.sql'))
-        ret = []
-        if result:
-            for row in result:
-                ret.append(Column(name=row['COLUMN_NAME'], type=row['COLUMN_TYPE']))
-        return ret
 
     def _get_average_row_size(self, entity: Type[ff.Entity]):
         result = self._execute(f"select CEIL(AVG(LENGTH(obj))) from {self._fqtn(entity)}")

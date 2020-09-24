@@ -3,7 +3,7 @@ import pytest
 from firefly import Registry, RepositoryFactory
 from firefly_test.iam.domain.entity import Role, Scope, User
 
-interfaces = ['data_api_mysql', 'data_api_mysql_mapped']
+interfaces = ['data_api_mysql', 'data_api_mysql_mapped', 'data_api_pg']
 
 
 @pytest.mark.parametrize('index', interfaces)

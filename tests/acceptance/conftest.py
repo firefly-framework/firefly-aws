@@ -33,6 +33,15 @@ services = {
             'db_name': os.environ['DB_NAME'],
         }
     },
+    'pg': {
+        'type': 'rdb',
+        'connection': {
+            'driver': 'data_api_pg',
+            'db_arn': os.environ['DB_ARN_PG'],
+            'db_secret_arn': os.environ['DB_SECRET_ARN_PG'],
+            'db_name': os.environ['DB_NAME'],
+        }
+    }
 }
 
 
@@ -100,7 +109,7 @@ def wake_up_database(container):
             sleep(5)
 
 
-interfaces = ['data_api_mysql', 'data_api_mysql_mapped']
+interfaces = ['data_api_mysql', 'data_api_mysql_mapped', 'data_api_pg']
 
 
 @pytest.fixture()
@@ -127,6 +136,7 @@ def build_repositories(entity, container):
     return {
         'data_api_mysql': build_repository(RdbRepository[entity], container, 'data_api_mysql'),
         'data_api_mysql_mapped': build_repository(RdbRepository[entity], container, 'data_api_mysql_mapped'),
+        'data_api_pg': build_repository(RdbRepository[entity], container, 'data_api_pg'),
     }
 
 
