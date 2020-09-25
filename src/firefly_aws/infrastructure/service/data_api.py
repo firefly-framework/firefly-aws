@@ -18,7 +18,6 @@ class DataApi(ff.LoggerAware):
     def execute(self, sql: str, params: list = None, db_arn: str = None, db_secret_arn: str = None,
                 db_name: str = None):
         params = params or []
-        print(f'{sql} - {str(params)[0:1500]}')
         self.info('%s - %s', sql, str(params))
 
         return self._rds_data_client.execute_statement(
