@@ -17,16 +17,14 @@ from __future__ import annotations
 from abc import ABC
 from datetime import datetime
 from math import floor
-from pprint import pprint
-from typing import Type, Union, Callable, Tuple
+from typing import Type, Union, Callable, Tuple, List
 
 import firefly as ff
 import firefly.infrastructure as ffi
 from botocore.exceptions import ClientError
 from firefly import domain as ffd
-from firefly.infrastructure.repository.rdb_repository import Column
-import firefly_aws.domain as domain
 
+import firefly_aws.domain as domain
 from firefly_aws.infrastructure.service.data_api import DataApi
 
 
@@ -35,7 +33,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
     _rds_data_client = None
     _serializer: ffi.JsonSerializer = None
     _data_api: DataApi = None
-    _size_limit_kb: int = 1024
+    _size_limit_kb: int = 1000
     _db_arn: str = None
     _db_secret_arn: str = None
     _db_name: str = None
@@ -51,11 +49,12 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         if db_name is not None:
             self._db_name = db_name
 
-    def _add(self, entity: ffd.Entity):
+    def _add(self, entity: List[ffd.Entity]):
         try:
             return super()._add(entity)
         except domain.DocumentTooLarge:
-            self._insert_large_document(entity)
+            for e in entity:
+                self._insert_large_document(e)
 
     def _all(self, entity_type: Type[ffd.Entity], criteria: ffd.BinaryOp = None, limit: int = None, offset: int = None,
              sort: Tuple[Union[str, Tuple[str, bool]]] = None, raw: bool = False, count: bool = False):
@@ -63,21 +62,17 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             return super()._all(
                 entity_type, criteria, limit=limit, offset=offset, sort=sort, raw=raw, count=count
             )
-        except ClientError as e:
-            if 'Database returned more than the allowed response size limit' in str(e):
-                query = self._generate_select(
-                    entity_type, criteria, limit=limit, offset=offset, sort=sort, count=count
-                )
-                return self._fetch_multiple_large_documents(query[0], query[1], entity_type)
-            raise e
+        except domain.DocumentTooLarge:
+            query = self._generate_select(
+                entity_type, criteria, limit=limit, offset=offset, sort=sort, count=count
+            )
+            return self._fetch_multiple_large_documents(query[0], query[1], entity_type)
 
     def _find(self, uuid: Union[str, Callable], entity_type: Type[ffd.Entity]):
         try:
             return super()._find(uuid, entity_type)
-        except ClientError as e:
-            if 'Database returned more than the allowed response size limit' in str(e):
-                return self._fetch_large_document(uuid, entity_type)
-            raise e
+        except domain.DocumentTooLarge:
+            return self._fetch_large_document(uuid, entity_type)
 
     def _remove(self, entity: ffd.Entity):
         return super()._remove(entity)
@@ -95,36 +90,62 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         obj = self._serialize_entity(entity)
         n = self._size_limit_kb * 1024
         first = True
+
         for chunk in [obj[i:i+n] for i in range(0, len(obj), n)]:
             if first:
                 if update:
                     self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
-                        'data': {'document': chunk},
+                        'data': {'__document': ''},
+                        'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
+                    }))
+                    data = self._data_fields(entity)
+                    del data['document']
+                    data['__document'] = chunk
+                    self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
+                        'data': data,
                         'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
                     }))
                 else:
+                    data = self._data_fields(entity)
+                    del data['document']
+                    data['__document'] = chunk
+                    data[entity.id_name()] = entity.id_value()
                     self._execute(*self._generate_query(entity, f'{self._sql_prefix}/insert.sql', {
-                        'data': {
-                            entity.id_name(): entity.id_value(),
-                            'document': chunk
-                        },
+                        'data': [data],
                         'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
                     }))
                 first = False
             else:
-                sql = f"update {self._fqtn(entity.__class__)} set document = CONCAT(obj, :str) where id = :id"
-                params = [
-                    {'name': 'id', 'value': {'stringValue': entity.id_value()}},
-                    {'name': 'str', 'value': {'stringValue': chunk}},
-                ]
+                sql = f"update {self._fqtn(entity.__class__)} set __document = CONCAT(__document, :str) " \
+                      f"where id = :id{self._cast_uuid()}"
+                params = {'id': entity.id_value(), 'str': chunk}
                 self._execute(sql, params)
+
+        sql = f"update {self._fqtn(entity.__class__)} set document = __document{self._cast_json()} " \
+              f"where id = :id{self._cast_uuid()}"
+        params = {'id': entity.id_value()}
+        self._execute(sql, params)
+
+        self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
+            'data': {'__document': ''},
+            'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
+        }))
+
+    @staticmethod
+    def _cast_json():
+        return ''
+
+    @staticmethod
+    def _cast_uuid():
+        return ''
 
     def _fetch_multiple_large_documents(self, sql: str, params: list, entity: Type[ff.Entity]):
         ret = []
-        sql = sql.replace('select obj', 'select id')
+        q = self._identifier_quote_char
+        sql = sql.replace(f'select {q}document{q}', 'select id')
         result = ff.retry(lambda: self._execute(sql, params))
-        for row in result['records']:
-            ret.append(self._fetch_large_document(row[0]['stringValue'], entity))
+        for row in result:
+            ret.append(self._fetch_large_document(row['id'], entity))
         return ret
 
     def _fetch_large_document(self, id_: str, entity: Type[ff.Entity]):
@@ -133,23 +154,28 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         document = ''
         while True:
             sql, params = self._generate_query(entity, f'{self._sql_prefix}/select.sql', {
-                'columns': [f'SUBSTR(obj, {start}, {n}) as obj'],
+                'columns': [self._substr(start, n)],
+                'criteria': ffd.Attr(entity.id_name()) == id_
             })
             result = self._execute(sql, params)
-            document += result['records'][0][0]['stringValue']
-            if len(result['records'][0][0]['stringValue']) < n:
+            document += result[0]['document']
+            if len(result[0]['document']) < n:
                 break
             start += n
 
         return entity.from_dict(self._serializer.deserialize(document))
 
+    @staticmethod
+    def _substr(start: int, n: int):
+        return f'SUBSTR(document, {start}, {n}) as document'
+
     def _ensure_connected(self):
         return True
 
     def _get_result_count(self, sql: str, params: list):
-        count_sql = f"select count(*) from ({sql}) a"
+        count_sql = f"select count(1) as c from ({sql}) a"
         result = ff.retry(lambda: self._execute(count_sql, params))
-        return result['records'][0][0]['longValue']
+        return result[0]['c']
 
     def _paginate(self, sql: str, params: list, entity: Type[ff.Entity], raw: bool = False):
         if entity.__name__ not in self._select_limits:
@@ -164,18 +190,19 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             try:
                 result = ff.retry(
                     lambda: self._execute(f'{sql} limit {limit} offset {offset}', params),
-                    should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
+                    should_retry=lambda err: 'Database returned more than the allowed response size limit' not in
+                                             str(err) and '(413)' not in str(err)
                 )
-            except ClientError as e:
-                if 'Database returned more than the allowed response size limit' in str(e) and limit > 10:
+            except domain.DocumentTooLarge:
+                if limit > 10:
                     limit = floor(limit / 2)
                     self._select_limits[entity.__name__] = limit
                     continue
-                raise e
+                raise
 
-            for row in result['records']:
+            for row in result:
                 ret.append(self._build_entity(entity, row, raw=raw))
-            if len(result['records']) < limit:
+            if len(result) < limit:
                 break
             offset += limit
 
@@ -185,13 +212,13 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         return ff.retry(
             lambda: self._execute(f'{sql} limit {limit} offset {offset}', params),
             should_retry=lambda err: 'Database returned more than the allowed response size limit'
-                                     not in str(err)
-        )['records']
+                                     not in str(err) and '(413)' not in str(err)
+        )
 
     def _get_average_row_size(self, entity: Type[ff.Entity]):
-        result = self._execute(f"select CEIL(AVG(LENGTH(obj))) from {self._fqtn(entity)}")
+        result = self._execute(f"select CEIL(AVG(LENGTH(document))) as c from {self._fqtn(entity)}")
         try:
-            return result['records'][0][0]['longValue'] / 1024
+            return result[0]['c'] / 1024
         except KeyError:
             return 1
 
@@ -231,17 +258,28 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
                 converted.append(self._generate_param_entry(k, type(v), v))
             params = converted
 
-        # return ff.retry(
-        #     lambda: self._data_api.execute(sql, params),
-        #     should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err)
+        # result = ff.retry(
+        #     lambda: self._data_api.execute(
+        #         sql,
+        #         params,
+        #         db_arn=self._db_arn,
+        #         db_secret_arn=self._db_secret_arn,
+        #         db_name=self._db_name
+        #     ),
+        #     should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err) and '(413)' not in str(err)
         # )
-        result = self._data_api.execute(
-            sql,
-            params,
-            db_arn=self._db_arn,
-            db_secret_arn=self._db_secret_arn,
-            db_name=self._db_name
-        )
+        try:
+            result = self._data_api.execute(
+                sql,
+                params,
+                db_arn=self._db_arn,
+                db_secret_arn=self._db_secret_arn,
+                db_name=self._db_name
+            )
+        except ClientError as e:
+            if 'Database returned more than the allowed response size limit' in str(e) or '(413)' in str(e):
+                raise domain.DocumentTooLarge()
+            raise e
 
         if 'records' in result:
             ret = []

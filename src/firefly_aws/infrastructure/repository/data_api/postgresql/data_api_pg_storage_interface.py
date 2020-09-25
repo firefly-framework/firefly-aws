@@ -39,3 +39,15 @@ class DataApiPgStorageInterface(DataApiStorageInterface):
             for row in result:
                 ret.append(Column(name=row['column_name'], type=row['data_type']))
         return ret
+
+    @staticmethod
+    def _substr(start: int, n: int):
+        return f'SUBSTR(document::text, {start}, {n}) as document'
+
+    @staticmethod
+    def _cast_json():
+        return '::json'
+
+    @staticmethod
+    def _cast_uuid():
+        return '::uuid'
