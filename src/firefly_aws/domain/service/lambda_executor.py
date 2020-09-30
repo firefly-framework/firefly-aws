@@ -38,6 +38,17 @@ ACCESS_CONTROL_HEADERS = {
     'Access-Control-Allow-Headers': 'Authorization, Accept, Accept-Language, Content-Language, Content-Type',
 }
 
+COGNITO_TRIGGERS = (
+    'PreSignUp_SignUp', 'PreSignUp_AdminCreateUser', 'PostConfirmation_ConfirmSignUp',
+    'PostConfirmation_ConfirmForgotPassword', 'PreAuthentication_Authentication', 'PostAuthentication_Authentication',
+    'DefineAuthChallenge_Authentication', 'CreateAuthChallenge_Authentication',
+    'VerifyAuthChallengeResponse_Authentication', 'TokenGeneration_HostedAuth', 'TokenGeneration_Authentication',
+    'TokenGeneration_NewPasswordChallenge', 'TokenGeneration_AuthenticateDevice', 'TokenGeneration_RefreshTokens',
+    'UserMigration_Authentication', 'UserMigration_ForgotPassword', 'CustomMessage_SignUp',
+    'CustomMessage_AdminCreateUser', 'CustomMessage_ResendCode', 'CustomMessage_ForgotPassword',
+    'CustomMessage_UpdateUserAttribute', 'CustomMessage_VerifyUserAttribute', 'CustomMessage_Authentication'
+)
+
 
 class LambdaExecutor(ff.DomainService):
     _serializer: ff.Serializer = None
@@ -64,7 +75,9 @@ class LambdaExecutor(ff.DomainService):
 
         try:
             message = False
+            aws_message = False
             if self._is_cognito_trigger_event(event):
+                aws_message = True
                 message = self._generate_cognito_trigger_messages(event)
                 if message is False:
                     self.debug('Passing through cognito trigger event')
@@ -73,7 +86,12 @@ class LambdaExecutor(ff.DomainService):
             if message is False:
                 message = self._serializer.deserialize(json.dumps(event))
             if isinstance(message, ff.Command):
-                return self.invoke(message)
+                try:
+                    return self.invoke(message)
+                except ff.ConfigurationError:
+                    if aws_message is True:
+                        return event
+                    raise
             elif isinstance(message, ff.Query):
                 return self.request(message)
         except:
@@ -204,10 +222,11 @@ class LambdaExecutor(ff.DomainService):
         return 'triggerSource' in event
 
     def _generate_cognito_trigger_messages(self, event: dict):
-        if event['triggerSource'] in ('TokenGeneration_HostedAuth', 'TokenGeneration_RefreshTokens'):
-            return self._message_factory.query('firefly_iaaa.GetTokenAccessRights', data={
+        if event['triggerSource'] in COGNITO_TRIGGERS:
+            return self._message_factory.command(f'firefly_aws.{event["triggerSource"]}', data={
                 'event': event
             })
+
         return False
 
     def load_payload(self, key: str):
