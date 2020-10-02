@@ -77,8 +77,13 @@ class DataApiMysqlStorageInterface(DataApiStorageInterface):
             raise e
 
     def _get_average_row_size(self, entity: Type[ff.Entity]):
+        schema, table = self._fqtn(entity).split('.')
+        sql = f"""
+        SELECT AVG_ROW_LENGTH FROM information_schema.tables 
+        WHERE TABLE_SCHEMA = '{schema}' and TABLE_NAME = '{table}';
+        """
         result = ff.retry(
-            lambda: self._data_api.execute(f"select CEIL(AVG(LENGTH(obj))) from {self._fqtn(entity)}", [])
+            lambda: self._data_api.execute(sql, [])
         )
         try:
             return result['records'][0][0]['longValue'] / 1024
