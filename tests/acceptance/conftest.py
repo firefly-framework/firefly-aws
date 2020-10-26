@@ -38,7 +38,7 @@ services = {
         'connection': {
             'driver': 'data_api_pg',
             'db_arn': os.environ['DB_ARN_PG10'],
-            'db_secret_arn': os.environ['DB_SECRET_ARN_PG'],
+            'db_secret_arn': os.environ['DB_SECRET_ARN_PG10'],
             'db_name': os.environ['DB_NAME'],
         }
     }
