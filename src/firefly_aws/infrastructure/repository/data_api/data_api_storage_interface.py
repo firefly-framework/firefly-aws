@@ -288,7 +288,10 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
                 d = {}
 
                 for data in result['columnMetadata']:
-                    d[data['name']] = list(row[counter].values())[0]
+                    if 'isNull' in row[counter] and row[counter]['isNull']:
+                        d[data['name']] = None
+                    else:
+                        d[data['name']] = list(row[counter].values())[0]
                     counter += 1
                 ret.append(d)
             return ret
