@@ -330,17 +330,17 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             else:
                 raise e
 
-        self._execute_ddl(context)
+        self._migrate_schema(context)
 
         self.info('Done')
 
-    def _execute_ddl(self, context: ff.Context):
+    def _migrate_schema(self, context: ff.Context):
         for entity in context.entities:
             if issubclass(entity, ff.AggregateRoot) and entity is not ff.AggregateRoot:
                 try:
                     repository = self._registry(entity)
                     if isinstance(repository, ffi.RdbRepository):
-                        repository.execute_ddl()
+                        repository.migrate_schema()
                 except ff.FrameworkError:
                     self.debug('Could not execute ddl for entity %s', entity)
 
