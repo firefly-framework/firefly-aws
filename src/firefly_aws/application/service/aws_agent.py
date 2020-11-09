@@ -48,8 +48,10 @@ import firefly.infrastructure as ffi
 import inflection
 import yaml
 from botocore.exceptions import ClientError
+from troposphere.dynamodb import Table, AttributeDefinition, KeySchema
+
 from firefly_aws import S3Service, ResourceNameAware
-from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join
+from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join, Equals
 from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route
 from troposphere.awslambda import Function, Code, VPCConfig, Environment, Permission, EventSourceMapping
 from troposphere.cloudwatch import Alarm, MetricDimension
@@ -319,6 +321,28 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                     DependsOn=[queue, dlq]
                 ))
 
+        # DynamoDB Table
+
+        ddb_table = template.add_resource(Table(
+            self._ddb_resource_name(context.name),
+            TableName=self._ddb_table_name(context.name),
+            AttributeDefinitions=[
+                AttributeDefinition(AttributeName='pk', AttributeType='S'),
+                AttributeDefinition(AttributeName='sk', AttributeType='S'),
+            ],
+            BillingMode='PAY_PER_REQUEST',
+            KeySchema=[
+                KeySchema(AttributeName='pk', KeyType='HASH'),
+                KeySchema(AttributeName='sk', KeyType='RANGE'),
+            ]
+        ))
+
+        template.add_output(Output(
+            "DDBTable",
+            Value=Ref(ddb_table),
+            Description="Document table"
+        ))
+
         self.info('Deploying stack')
         stack_name = self._stack_name(context.name)
         try:
@@ -448,8 +472,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         memory_size = template.add_parameter(Parameter(
             f'{self._stack_name()}MemorySize',
             Type=NUMBER,
-            Default='3008',
-
+            Default='3008'
         ))
 
         timeout_gateway = template.add_parameter(Parameter(
@@ -648,6 +671,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             'CONTEXT': context.name,
             'REGION': self._region,
             'BUCKET': self._bucket,
+            'DDB_TABLE': self._ddb_table_name(context.name),
         }
         if env is not None:
             defaults.update(env)

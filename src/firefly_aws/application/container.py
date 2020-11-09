@@ -34,11 +34,13 @@ class Container(di.Container):
     sns_client = lambda self: boto3.client('sns')
     sqs_client = lambda self: boto3.client('sqs')
     rds_data_client = lambda self: boto3.client('rds-data')
+    ddb_client = lambda self: boto3.client('dynamodb')
 
     data_api: infra.DataApi = infra.DataApi
     s3_service: infra.BotoS3Service = infra.BotoS3Service
     lambda_executor: domain.LambdaExecutor = domain.LambdaExecutor
     jwt_decoder: domain.JwtDecoder = infra.CognitoJwtDecoder
+    mutex: infra.DdbMutex = infra.DdbMutex
 
 
 if os.environ['ENV'] != 'local':

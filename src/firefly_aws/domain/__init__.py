@@ -38,6 +38,12 @@ class ResourceNameAware(ABC):
     def _queue_name(self, context: str):
         return f'{self._service_name(context)}Queue'
 
+    def _ddb_resource_name(self, name: str):
+        return f'{self._service_name(name)}DdbTable'
+
+    def _ddb_table_name(self, context: str):
+        return f'{inflection.camelize(context)}-{self._env}'
+
     def _topic_name(self, context: str):
         return f'{self._service_name(context)}Topic'
 
