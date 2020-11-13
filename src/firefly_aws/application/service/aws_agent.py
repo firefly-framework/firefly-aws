@@ -613,6 +613,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                                     'secretsmanager:GetSecretValue',
                                     'sns:*',
                                     'sqs:*',
+                                    'dynamodb:*',
                                 ],
                                 'Resource': '*',
                                 'Effect': 'Allow',
