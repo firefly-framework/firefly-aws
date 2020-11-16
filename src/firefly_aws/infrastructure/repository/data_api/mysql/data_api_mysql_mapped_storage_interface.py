@@ -43,6 +43,6 @@ class DataApiMysqlMappedStorageInterface(DataApiMysqlBase):
         """
         result = ff.retry(lambda: self._execute(sql))
         try:
-            return result['records'][0][0]['longValue'] / 1024
+            return result[0]['AVG_ROW_LENGTH'] / 1024
         except KeyError:
             return 1

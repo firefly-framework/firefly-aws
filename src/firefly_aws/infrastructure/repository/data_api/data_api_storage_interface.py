@@ -66,6 +66,9 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             query = self._generate_select(
                 entity_type, criteria, limit=limit, offset=offset, sort=sort, count=count
             )
+            if self._map_all is True:
+                return self._paginate(query[0], query[1], entity_type, raw=raw)
+
             return self._fetch_multiple_large_documents(query[0], query[1], entity_type)
 
     def _find(self, uuid: Union[str, Callable], entity_type: Type[ffd.Entity]):
