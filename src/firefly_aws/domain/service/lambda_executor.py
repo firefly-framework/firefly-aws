@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import re
 from pprint import pprint
 from typing import Union
@@ -223,9 +224,12 @@ class LambdaExecutor(ff.DomainService):
 
     def _generate_cognito_trigger_messages(self, event: dict):
         if event['triggerSource'] in COGNITO_TRIGGERS:
-            return self._message_factory.command(f'firefly_aws.{event["triggerSource"]}', data={
-                'event': event
-            })
+            return self._message_factory.command(
+                f'{os.environ.get("CONTEXT", "firefly_aws")}.{event["triggerSource"]}',
+                data={
+                    'event': event
+                }
+            )
 
         return False
 
