@@ -60,10 +60,14 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
         return self._invoke_lambda(query)
 
     def _invoke_lambda(self, message: Union[Command, Query]):
+        async_ = False
+        if hasattr(message, '_async'):
+            async_ = getattr(message, '_async')
+
         try:
             response = self._lambda_client.invoke(
                 FunctionName=f'{self._service_name(message.get_context())}Sync',
-                InvocationType='RequestResponse',
+                InvocationType='RequestResponse' if async_ is False else 'Event',
                 LogType='None',
                 Payload=self._serializer.serialize(message)
             )
