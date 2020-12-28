@@ -3,7 +3,7 @@ import setuptools
 
 setuptools.setup(
     name='firefly-aws',
-    version='1.1.7',
+    version='1.1.8',
     author="",
     author_email="",
     description="AWS extension for the Firefly framework.",

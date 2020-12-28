@@ -155,6 +155,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         n = self._size_limit_kb * 1024
         start = 1
         document = ''
+        self._execute(f"update {self._fqtn(entity)} set __document = document where {entity.id_name()} = '{id_}'")
         while True:
             sql, params = self._generate_query(entity, f'{self._sql_prefix}/select.sql', {
                 'columns': [self._substr(start, n)],
@@ -170,7 +171,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
 
     @staticmethod
     def _substr(start: int, n: int):
-        return f'SUBSTR(document, {start}, {n}) as document'
+        return f'SUBSTR(__document, {start}, {n}) as document'
 
     def _ensure_connected(self):
         return True
