@@ -41,10 +41,6 @@ class DataApiPgStorageInterface(DataApiStorageInterface):
         return ret
 
     @staticmethod
-    def _substr(start: int, n: int):
-        return f'SUBSTR(document::text, {start}, {n}) as document'
-
-    @staticmethod
     def _cast_json():
         return '::json'
 
