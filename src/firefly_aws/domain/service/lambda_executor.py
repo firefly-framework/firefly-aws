@@ -88,13 +88,13 @@ class LambdaExecutor(ff.DomainService):
                 message = self._serializer.deserialize(json.dumps(event))
             if isinstance(message, ff.Command):
                 try:
-                    return self.invoke(message)
+                    return self._serializer.serialize(self.invoke(message))
                 except ff.ConfigurationError:
                     if aws_message is True:
                         return event
                     raise
             elif isinstance(message, ff.Query):
-                return self.request(message)
+                return self._serializer.serialize(self.request(message))
         except:
             pass
 
