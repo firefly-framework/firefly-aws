@@ -40,6 +40,13 @@ class DataApiPgStorageInterface(DataApiStorageInterface):
                 ret.append(Column(name=row['column_name'], type=row['data_type']))
         return ret
 
+    def _get_average_row_size(self, entity: Type[ff.Entity]):
+        result = self._execute(f"select CEIL(AVG(LENGTH(document::text)))::int as c from {self._fqtn(entity)}")
+        try:
+            return result[0]['c'] / 1024
+        except KeyError:
+            return 1
+
     @staticmethod
     def _cast_json():
         return '::json'

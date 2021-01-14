@@ -22,7 +22,7 @@ class DdbMutex(ff.Mutex):
                         'sk': {'S': 'mutex'},
                         'ttl': {'N': str(round((datetime.now() + timedelta(seconds=(60 * 15))).timestamp()))},
                     },
-                    ConditionExpression=f'attribute_not_exists(pk) or (ttl < {datetime.now().timestamp()})'
+                    ConditionExpression=f'attribute_not_exists(pk)'
                 )
                 return True
             except ClientError as e:

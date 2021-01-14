@@ -66,10 +66,10 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             query = self._generate_select(
                 entity_type, criteria, limit=limit, offset=offset, sort=sort, count=count
             )
-            if self._map_all is True:
+            try:
                 return self._paginate(query[0], query[1], entity_type, raw=raw)
-
-            return self._fetch_multiple_large_documents(query[0], query[1], entity_type)
+            except domain.DocumentTooLarge:
+                return self._fetch_multiple_large_documents(query[0], query[1], entity_type)
 
     def _find(self, uuid: Union[str, Callable], entity_type: Type[ffd.Entity]):
         try:
@@ -187,6 +187,8 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             if self._select_limits[entity.__name__] == 0:
                 self._select_limits[entity.__name__] = 1
         limit = floor(self._size_limit_kb / self._select_limits[entity.__name__])
+        if limit == 0:
+            raise domain.DocumentTooLarge()
         offset = 0
 
         ret = []
