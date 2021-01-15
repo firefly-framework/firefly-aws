@@ -37,6 +37,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
     _db_arn: str = None
     _db_secret_arn: str = None
     _db_name: str = None
+    _mutex: ffd.Mutex = None
 
     def __init__(self, db_arn: str = None, db_secret_arn: str = None, db_name: str = None, **kwargs):
         super().__init__(**kwargs)
@@ -93,46 +94,65 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         obj = self._serialize_entity(entity)
         n = self._size_limit_kb * 1024
         first = True
+        try:
+            version = getattr(entity, '__ff_version')
+        except AttributeError:
+            version = 1
 
-        for chunk in [obj[i:i+n] for i in range(0, len(obj), n)]:
-            if first:
-                if update:
-                    self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
-                        'data': {'__document': ''},
-                        'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
-                    }))
-                    data = self._data_fields(entity)
-                    del data['document']
-                    data['__document'] = chunk
-                    self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
-                        'data': data,
-                        'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
-                    }))
+        with self._mutex(f'{entity.get_fqn()}-{entity.id_value()}'):
+            for chunk in [obj[i:i+n] for i in range(0, len(obj), n)]:
+                if first:
+                    if update:
+                        criteria = ffd.Attr(entity.id_name()) == entity.id_value()
+                        try:
+                            criteria &= ffd.Attr('version') == version
+                        except AttributeError:
+                            pass
+
+                        if self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
+                            'data': {'__document': ''},
+                            'criteria': criteria,
+                        })) == 0:
+                            raise ffd.ConcurrentUpdateDetected()
+                        data = self._data_fields(entity)
+                        del data['document']
+                        del data['version']
+                        data['__document'] = chunk
+                        self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
+                            'data': data,
+                            'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
+                        }))
+                    else:
+                        data = self._data_fields(entity)
+                        del data['document']
+                        data['__document'] = chunk
+                        data[entity.id_name()] = entity.id_value()
+                        data['version'] = 1
+                        self._execute(*self._generate_query(entity, f'{self._sql_prefix}/insert.sql', {
+                            'data': [data],
+                            'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
+                        }))
+                    first = False
                 else:
-                    data = self._data_fields(entity)
-                    del data['document']
-                    data['__document'] = chunk
-                    data[entity.id_name()] = entity.id_value()
-                    self._execute(*self._generate_query(entity, f'{self._sql_prefix}/insert.sql', {
-                        'data': [data],
-                        'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
-                    }))
-                first = False
-            else:
-                sql = f"update {self._fqtn(entity.__class__)} set __document = CONCAT(__document, :str) " \
-                      f"where id = :id{self._cast_uuid()}"
-                params = {'id': entity.id_value(), 'str': chunk}
-                self._execute(sql, params)
+                    sql = f"update {self._fqtn(entity.__class__)} set __document = CONCAT(__document, :str) " \
+                          f"where id = :id{self._cast_uuid()}"
+                    params = {'id': entity.id_value(), 'str': chunk}
+                    self._execute(sql, params)
 
-        sql = f"update {self._fqtn(entity.__class__)} set document = __document{self._cast_json()} " \
-              f"where id = :id{self._cast_uuid()}"
-        params = {'id': entity.id_value()}
-        self._execute(sql, params)
+            sql = f"update {self._fqtn(entity.__class__)} set document = __document{self._cast_json()}, version = :newVersion " \
+                  f"where id = :id{self._cast_uuid()} and version = :version"
+            params = {
+                'id': entity.id_value(),
+                'version': version,
+                'newVersion': version + 1
+            }
+            if self._execute(sql, params) == 0:
+                raise ffd.ConcurrentUpdateDetected()
 
-        self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
-            'data': {'__document': ''},
-            'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
-        }))
+            self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
+                'data': {'__document': ''},
+                'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
+            }))
 
     @staticmethod
     def _cast_json():
@@ -155,19 +175,26 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         n = self._size_limit_kb * 1024
         start = 1
         document = ''
-        self._execute(f"update {self._fqtn(entity)} set __document = document where {entity.id_name()} = '{id_}'")
-        while True:
-            sql, params = self._generate_query(entity, f'{self._sql_prefix}/select.sql', {
-                'columns': [self._substr(start, n)],
-                'criteria': ffd.Attr(entity.id_name()) == id_
-            })
-            result = self._execute(sql, params)
-            document += result[0]['document']
-            if len(result[0]['document']) < n:
-                break
-            start += n
 
-        return entity.from_dict(self._serializer.deserialize(document))
+        with self._mutex(f'{entity.get_fqn()}-{id_}'):
+            self._execute(f"update {self._fqtn(entity)} set __document = document where {entity.id_name()} = '{id_}'")
+
+            while True:
+                sql, params = self._generate_query(entity, f'{self._sql_prefix}/select.sql', {
+                    'columns': [self._substr(start, n)],
+                    'criteria': ffd.Attr(entity.id_name()) == id_
+                })
+                result = self._execute(sql, params)
+                document += result[0]['document']
+                if len(result[0]['document']) < n:
+                    break
+                start += n
+
+            result = self._execute(f"select version from {self._fqtn(entity)} where {entity.id_name()} = '{id_}'")
+            ret = entity.from_dict(self._serializer.deserialize(document))
+            setattr(ret, '__ff_version', result[0]['version'])
+
+        return ret
 
     @staticmethod
     def _substr(start: int, n: int):
