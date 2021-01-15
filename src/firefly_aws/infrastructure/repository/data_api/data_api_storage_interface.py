@@ -302,4 +302,4 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
                 ret.append(d)
             return ret
         else:
-            return result
+            return result['numberOfRecordsUpdated']
