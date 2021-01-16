@@ -11,5 +11,5 @@ python-dotenv~=0.13.0
 setuptools~=46.1.3
 dateparser>=0.7.6
 firefly-dependency-injection==1.0.0
-firefly-framework==1.1.29
+firefly-framework==1.1.32
 -e .

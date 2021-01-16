@@ -49,6 +49,7 @@ import inflection
 import yaml
 from botocore.exceptions import ClientError
 from troposphere.dynamodb import Table, AttributeDefinition, KeySchema
+from troposphere.events import Target, Rule
 
 from firefly_aws import S3Service, ResourceNameAware
 from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join, Equals
@@ -192,6 +193,37 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             f'{self._lambda_resource_name(service.name)}Async',
             **params
         ))
+
+        # Timers
+        for cls, _ in context.command_handlers.items():
+            if cls.has_timer():
+                timer = cls.get_timer()
+                if timer.environment is not None and timer.environment != self._env:
+                    continue
+                if isinstance(timer.command, str):
+                    timer_name = timer.command
+                else:
+                    timer_name = timer.command.__name__
+
+                target = Target(
+                    f'{self._service_name(service.name)}AsyncTarget',
+                    Arn=GetAtt(f'{self._lambda_resource_name(service.name)}Async', 'Arn'),
+                    Id=f'{self._lambda_resource_name(service.name)}Async',
+                    Input=f'{{"_context": "{context.name}", "_type": "command", "_name": "{cls.__name__}"}}'
+                )
+                rule = template.add_resource(Rule(
+                    f'{timer_name}TimerRule',
+                    ScheduleExpression=f'cron({timer.cron})',
+                    State='ENABLED',
+                    Targets=[target]
+                ))
+                template.add_resource(Permission(
+                    f'{timer_name}TimerPermission',
+                    Action='lambda:invokeFunction',
+                    Principal='events.amazonaws.com',
+                    FunctionName=Ref(async_lambda),
+                    SourceArn=GetAtt(rule, 'Arn')
+                ))
 
         integration = template.add_resource(Integration(
             self._integration_name(context.name),
