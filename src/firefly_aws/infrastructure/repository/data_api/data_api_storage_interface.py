@@ -221,11 +221,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         ret = []
         while True:
             try:
-                result = ff.retry(
-                    lambda: self._execute(f'{sql} limit {limit} offset {offset}', params),
-                    should_retry=lambda err: 'Database returned more than the allowed response size limit' not in
-                                             str(err) and '(413)' not in str(err)
-                )
+                result = self._execute(f'{sql} limit {limit} offset {offset}', params)
             except domain.DocumentTooLarge:
                 if limit > 10:
                     limit = floor(limit / 2)
