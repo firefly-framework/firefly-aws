@@ -48,19 +48,20 @@ import firefly.infrastructure as ffi
 import inflection
 import yaml
 from botocore.exceptions import ClientError
-from troposphere.dynamodb import Table, AttributeDefinition, KeySchema
-from troposphere.events import Target, Rule
-
-from firefly_aws import S3Service, ResourceNameAware
-from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join, Equals
+from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join
 from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route
 from troposphere.awslambda import Function, Code, VPCConfig, Environment, Permission, EventSourceMapping
-from troposphere.cloudwatch import Alarm, MetricDimension
 from troposphere.constants import NUMBER
+from troposphere.dynamodb import Table, AttributeDefinition, KeySchema
+from troposphere.events import Target, Rule
 from troposphere.iam import Role, Policy
+from troposphere.logs import SubscriptionFilter, LogGroup
 from troposphere.s3 import Bucket, LifecycleRule, LifecycleConfiguration
 from troposphere.sns import Topic, SubscriptionResource
 from troposphere.sqs import Queue, QueuePolicy, RedrivePolicy
+
+import firefly_aws.domain as domain
+from firefly_aws import S3Service, ResourceNameAware
 
 
 @ff.agent('aws')
@@ -72,6 +73,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
     _s3_service: S3Service = None
     _sns_client = None
     _cloudformation_client = None
+    _package_and_deploy_code: domain.PackageAndDeployCode = None
 
     def __init__(self, env: str, account_id: str):
         self._env = env
@@ -101,7 +103,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
 
     def _deploy_service(self, service: ff.Service):
         context = self._context_map.get_context(service.name)
-        self._package_and_deploy_code(context)
+        self._package_and_deploy_code(self._bucket, self._code_key, self._env, config=self._configuration.all)
 
         template = Template()
         template.set_version('2010-09-09')
@@ -194,6 +196,29 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             **params
         ))
 
+        params = {
+            'FunctionName': f'{self._service_name(service.name)}Errors',
+            'Code': Code(
+                S3Bucket=self._bucket,
+                S3Key=self._code_key
+            ),
+            'Handler': 'handlers.main',
+            'Role': GetAtt(role_title, 'Arn'),
+            'Runtime': 'python3.7',
+            'MemorySize': Ref(memory_size),
+            'Timeout': Ref(timeout_gateway),
+            'Environment': self._lambda_environment(context)
+        }
+        if self._security_group_ids and self._subnet_ids:
+            params['VpcConfig'] = VPCConfig(
+                SecurityGroupIds=self._security_group_ids,
+                SubnetIds=self._subnet_ids
+            )
+        error_lambda = template.add_resource(Function(
+            f'{self._lambda_resource_name(service.name)}Errors',
+            **params
+        ))
+
         # Timers
         for cls, _ in context.command_handlers.items():
             if cls.has_timer():
@@ -259,23 +284,8 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         ))
 
         # Error alarms / subscriptions
-
-        if 'errors' in self._aws_config:
-            alerts_topic = template.add_resource(Topic(
-                self._alert_topic_name(service.name),
-                TopicName=self._alert_topic_name(service.name)
-            ))
-            self._add_error_alarm(template, f'{self._service_name(context.name)}Sync', context.name, alerts_topic)
-            self._add_error_alarm(template, f'{self._service_name(context.name)}Async', context.name, alerts_topic)
-
-            if 'email' in self._aws_config.get('errors'):
-                template.add_resource(SubscriptionResource(
-                    self._alarm_subscription_name(context.name),
-                    Protocol='email',
-                    Endpoint=self._aws_config.get('errors').get('email').get('recipients'),
-                    TopicArn=self._alert_topic_arn(context.name),
-                    DependsOn=[alerts_topic]
-                ))
+        self._add_subscription_filter(template, error_lambda, f'{self._service_name(context.name)}Sync')
+        self._add_subscription_filter(template, error_lambda, f'{self._service_name(context.name)}Async')
 
         # Queues / Topics
 
@@ -431,63 +441,6 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
 
         return ret
 
-    def _package_and_deploy_code(self, context: ff.Context):
-        self.info('Setting up build directory')
-        if not os.path.isdir('./build'):
-            os.mkdir('./build')
-        if os.path.isdir('./build/python-sources'):
-            shutil.rmtree('./build/python-sources', ignore_errors=True)
-        os.mkdir('./build/python-sources')
-
-        self.info('Installing source files')
-        # TODO use setup.py instead?
-        import subprocess
-        subprocess.call([
-            'pip', 'install',
-            '-r', self._deployment.requirements_file or 'requirements.txt',
-            '-t', './build/python-sources'
-        ])
-
-        self.info('Packaging artifact')
-        subprocess.call(['cp', 'templates/aws/handlers.py', 'build/python-sources/.'])
-        os.chdir('./build/python-sources')
-        with open('firefly.yml', 'w') as fp:
-            fp.write(yaml.dump(self._configuration.all))
-
-        subprocess.call(['find', '.', '-name', '"*.so"', '|', 'xargs', 'strip'])
-        subprocess.call(['find', '.', '-name', '"*.so.*"', '|', 'xargs', 'strip'])
-        subprocess.call(['find', '.', '-name', '"*.pyc"', '-delete'])
-        file_name = self._code_key.split('/')[-1]
-        subprocess.call(['zip', '-r', f'../{file_name}', '.'])
-        os.chdir('..')
-
-        self.info('Uploading artifact')
-        with open(file_name, 'rb') as fp:
-            self._s3_client.put_object(
-                Body=fp.read(),
-                Bucket=self._bucket,
-                Key=self._code_key
-            )
-        os.chdir('..')
-
-        self._clean_up_old_artifacts(context)
-
-    def _clean_up_old_artifacts(self, context: ff.Context):
-        response = self._s3_client.list_objects(
-            Bucket=self._bucket,
-            Prefix=self._code_path
-        )
-
-        files = []
-        for row in response['Contents']:
-            files.append((row['Key'], row['LastModified']))
-        if len(files) < 3:
-            return
-
-        files.sort(key=lambda i: i[1], reverse=True)
-        for key, _ in files[2:]:
-            self._s3_client.delete_object(Bucket=self._bucket, Key=key)
-
     def _create_project_stack(self):
         update = True
         try:
@@ -531,16 +484,36 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         role_title = f'{self._rest_api_name()}Role'
         self._add_role(role_title, template)
 
-        default_lambda = template.add_resource(Function(
+        code_key = None
+        if update is True:
+            response = self._s3_client.list_objects(
+                Bucket=self._bucket,
+                Prefix=f'lambda/code/{self._service_name()}/'
+            )
+            files = []
+            if 'Contents' in response:
+                for row in response['Contents']:
+                    files.append((row['Key'], row['LastModified']))
+                files.sort(key=lambda i: i[1], reverse=True)
+                code_key = files[0][0]
+
+        if update is False or code_key is None:
+            code_key = f'lambda/code/{self._service_name()}/{datetime.now().isoformat()}.zip'
+            self._package_and_deploy_code(
+                self._bucket,
+                code_key,
+                self._env,
+                requirements=['firefly-framework', 'firefly-aws', 'firefly-dependency-injection']
+            )
+
+        self._default_lambda = template.add_resource(Function(
             f'{self._rest_api_name()}Function',
             FunctionName=self._rest_api_name(),
             Code=Code(
-                ZipFile='\n'.join([
-                    'def handler(event, context):',
-                    '    return event'
-                ])
+                S3Bucket=self._bucket,
+                S3Key=code_key
             ),
-            Handler='index.handler',
+            Handler='handlers.main',
             Role=GetAtt(role_title, 'Arn'),
             Runtime='python3.7',
             MemorySize=Ref(memory_size),
@@ -558,7 +531,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                 ':',
                 self._account_id,
                 ':function:',
-                Ref(default_lambda),
+                Ref(self._default_lambda),
             ]),
             DependsOn=f'{self._rest_api_name()}Function'
         ))
@@ -604,19 +577,28 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         else:
             self._create_stack(self._stack_name(), template)
 
-    def _add_error_alarm(self, template, function_name: str, context: str, topic):
-        template.add_resource(Alarm(
-            f'{function_name}ErrorAlarm',
-            AlarmActions=[self._alert_topic_arn(context)],
-            ComparisonOperator='GreaterThanThreshold',
-            EvaluationPeriods=1,
-            MetricName='Errors',
-            Namespace='AWS/Lambda',
-            Dimensions=[MetricDimension(Name='FunctionName', Value=function_name)],
-            Period=60,
-            Statistic='Sum',
-            Threshold=0,
-            DependsOn=[topic]
+    def _add_subscription_filter(self, template, function, function_name: str):
+        log_group = template.add_resource(LogGroup(
+            f'{function_name}LogGroup',
+            LogGroupName=f'/aws/lambda/{function_name}',
+            RetentionInDays=90,
+            DependsOn=function
+        ))
+        permission = template.add_resource(Permission(
+            f'{function_name}SubscriptionFilterPermission',
+            Action='lambda:InvokeFunction',
+            FunctionName=Ref(function),
+            Principal=f'logs.{self._region}.amazonaws.com',
+            SourceAccount=self._account_id,
+            SourceArn=GetAtt(log_group, 'Arn'),
+            DependsOn=log_group
+        ))
+        template.add_resource(SubscriptionFilter(
+            f'{function_name}SubscriptionFilter',
+            DestinationArn=GetAtt(function, 'Arn'),
+            FilterPattern='?ERROR ?"Task timed out"',
+            LogGroupName=f'/aws/lambda/{function_name}',
+            DependsOn=permission
         ))
 
     def _add_role(self, role_name: str, template):

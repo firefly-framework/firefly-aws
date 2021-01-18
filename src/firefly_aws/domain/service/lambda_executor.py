@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import base64
+import gzip
 import inspect
 import json
 import os
@@ -83,6 +85,9 @@ class LambdaExecutor(ff.DomainService):
                 if message is False:
                     self.debug('Passing through cognito trigger event')
                     return event
+
+            if self._is_cloudwatch_message(event):
+                message = self._generate_error_handling_message(event)
 
             if message is False:
                 message = self._serializer.deserialize(json.dumps(event))
@@ -219,6 +224,17 @@ class LambdaExecutor(ff.DomainService):
             self.complete_handshake(event['Records'][0])
         else:
             self.complete_batch_handshake(event['Records'])
+
+    def _is_cloudwatch_message(self, event: dict):
+        return 'awslogs' in event
+
+    def _generate_error_handling_message(self, event: dict):
+        payload = base64.b64decode(event['awslogs']['data'])
+        data = gzip.decompress(payload).decode('ascii')
+        return self._message_factory.command(
+            'firefly.ProcessError',
+            data=json.loads(data)
+        )
 
     @staticmethod
     def _is_cognito_trigger_event(event: dict):

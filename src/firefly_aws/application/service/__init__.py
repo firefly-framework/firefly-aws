@@ -13,3 +13,4 @@
 #  <http://www.gnu.org/licenses/>.
 
 from .aws_agent import AwsAgent
+from .process_error import ProcessError

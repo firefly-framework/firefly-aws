@@ -19,5 +19,8 @@ import firefly as ff
 
 @ff.command_handler('firefly.ProcessError')
 class ProcessError(ff.ApplicationService):
+    _contact_map: ff.ContextMap = None
+
     def __call__(self, **kwargs):
-        pass
+        print('Process Error')
+        print(kwargs)
