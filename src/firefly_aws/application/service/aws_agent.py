@@ -454,9 +454,11 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         with open('firefly.yml', 'w') as fp:
             fp.write(yaml.dump(self._configuration.all))
 
-        subprocess.call(['find', '.', '-name', '"*.so"', '|', 'xargs', 'strip'])
-        subprocess.call(['find', '.', '-name', '"*.so.*"', '|', 'xargs', 'strip'])
-        subprocess.call(['find', '.', '-name', '"*.pyc"', '-delete'])
+        subprocess.call(['find', '.', '-name', '"*.so"', '-exec', 'strip', '{}', ';'])
+        subprocess.call(['find', '.', '-name', '"*.so.*"', '-exec', 'strip', '{}', ';'])
+        subprocess.call(['find', '.', '-name', '"*.pyc"', '-exec', 'rm', '-Rf', '{}', ';'])
+        subprocess.call(['find', '.', '-name', 'tests', '-type', 'd', '-exec', 'rm', '-R', '{}', ';'])
+
         file_name = self._code_key.split('/')[-1]
         subprocess.call(['zip', '-r', f'../{file_name}', '.'])
         os.chdir('..')
