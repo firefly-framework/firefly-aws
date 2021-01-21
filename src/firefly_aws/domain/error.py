@@ -16,8 +16,10 @@ from __future__ import annotations
 
 
 class FireflyAwsError(Exception):
-    pass
+    def __init__(self, *args):
+        Exception.__init__(self, *args)
 
 
 class DocumentTooLarge(FireflyAwsError):
-    pass
+    def __init__(self, *args):
+        Exception.__init__(self, *args)

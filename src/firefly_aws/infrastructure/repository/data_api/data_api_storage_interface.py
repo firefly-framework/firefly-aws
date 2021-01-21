@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import ABC
 from datetime import datetime
-from math import floor
+from math import floor, ceil
 from typing import Type, Union, Callable, Tuple, List
 
 import firefly as ff
@@ -38,6 +38,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
     _db_secret_arn: str = None
     _db_name: str = None
     _mutex: ffd.Mutex = None
+    _batch_process: ffd.BatchProcess = None
 
     def __init__(self, db_arn: str = None, db_secret_arn: str = None, db_name: str = None, **kwargs):
         super().__init__(**kwargs)
@@ -209,31 +210,35 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         return result[0]['c']
 
     def _paginate(self, sql: str, params: list, entity: Type[ff.Entity], raw: bool = False):
-        if entity.__name__ not in self._select_limits:
-            self._select_limits[entity.__name__] = self._get_average_row_size(entity)
-            if self._select_limits[entity.__name__] == 0:
-                self._select_limits[entity.__name__] = 1
-        limit = floor(self._size_limit_kb / self._select_limits[entity.__name__])
-        if limit == 0:
-            raise domain.DocumentTooLarge()
+        count = self._execute(f'select count(1) from ({sql}) sub', params)[0]['count']
+        limit = 1000
         offset = 0
 
-        ret = []
         while True:
-            try:
-                result = self._execute(f'{sql} limit {limit} offset {offset}', params)
-            except domain.DocumentTooLarge:
-                if limit > 10:
-                    limit = floor(limit / 2)
-                    self._select_limits[entity.__name__] = limit
-                    continue
-                raise
+            args = []
+            for i in range(0, ceil(count / limit)):
+                args.append((f'{sql} limit {limit} offset {offset}', params))
+                offset += limit
+            results = self._batch_process(self._execute, args)
 
+            do_break = True
+            for result in results:
+                if isinstance(result, Exception):
+                    if isinstance(result, domain.DocumentTooLarge):
+                        limit -= 250
+                        offset = 0
+                        if limit <= 10:
+                            raise domain.DocumentTooLarge()
+                        do_break = False
+                    else:
+                        raise result
+            if do_break:
+                break
+
+        ret = []
+        for result in results:
             for row in result:
                 ret.append(self._build_entity(entity, row, raw=raw))
-            if len(result) < limit:
-                break
-            offset += limit
 
         return ret
 
