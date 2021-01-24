@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+import base64
 import inspect
+import io
 import json
 import os
 import re
@@ -22,6 +24,8 @@ from pprint import pprint
 from typing import Union
 
 import firefly as ff
+from multipart import MultipartParser
+
 import firefly_aws.domain as domain
 
 
@@ -58,6 +62,7 @@ class LambdaExecutor(ff.DomainService):
     _s3_client = None
     _s3_service: domain.S3Service = None
     _bucket: str = None
+    _kernel: ff.Kernel = None
 
     def __init__(self):
         self._version_matcher = re.compile(r'^/v\d')
@@ -65,6 +70,8 @@ class LambdaExecutor(ff.DomainService):
     def run(self, event: dict, context: dict):
         self.debug('Event: %s', event)
         self.debug('Context: %s', context)
+
+        self._kernel.reset()
 
         if 'requestContext' in event and 'http' in event['requestContext']:
             self.info('HTTP request')
@@ -123,6 +130,8 @@ class LambdaExecutor(ff.DomainService):
                 if k.lower() == 'content-type':
                     if 'application/json' in v.lower():
                         body = self._serializer.deserialize(event['body'])
+                    elif 'multipart/form-data' in v.lower():
+                        body = self._parse_multipart(v, event['body'])
                     else:
                         body = event['body']
             if body is None:
@@ -145,13 +154,12 @@ class LambdaExecutor(ff.DomainService):
             if 'queryStringParameters' in event:
                 params.update(event['queryStringParameters'])
 
-            params['headers'] = {
-                'http_request': {
-                    'headers': event['headers'],
-                },
-                'secured': endpoint.secured,
-                'scopes': endpoint.scopes,
+            self._kernel.http_request = {
+                'headers': event['headers'],
             }
+            self._kernel.secured = endpoint.secured
+            self._kernel.required_scopes = endpoint.scopes
+            self._kernel.user = ff.User()
 
             try:
                 if method.lower() == 'get':
@@ -174,6 +182,25 @@ class LambdaExecutor(ff.DomainService):
 
         except TypeError:
             pass
+
+    def _parse_multipart(self, header: str, body: str):
+        boundary = None
+        parts = header.split(';')
+        for part in parts:
+            if 'boundary=' in part:
+                boundary = part.split('=')[-1]
+
+        self.info('Boundary: %s', boundary)
+        ret = {}
+        body = base64.b64decode(body)
+        parser = MultipartParser(io.BytesIO(body), boundary)
+        for part in parser:
+            if part.file and part.filename is not None:
+                ret[part.name] = ff.File(name=part.filename, content=part.value)
+            else:
+                ret[part.name] = part.value
+
+        return ret
 
     def _handle_http_response(self, response: any, status_code: int = 200, headers: dict = None):
         headers = headers or {}

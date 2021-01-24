@@ -25,11 +25,14 @@ import firefly_aws.domain as domain
 @ff.authenticator()
 class CognitoAuthenticator(ff.Handler, ff.LoggerAware):
     _jwt_decoder: domain.JwtDecoder = None
+    _kernel: ffd.Kernel = None
 
     def handle(self, message: ffd.Message) -> Optional[bool]:
-        if 'http_request' in message.headers and message.headers.get('secured', True):
+        self.debug('Authenticating with Cognito')
+        self.debug(self._kernel)
+        if self._kernel.http_request and self._kernel.secured:
             token = None
-            for k, v in message.headers['http_request']['headers'].items():
+            for k, v in self._kernel.http_request['headers'].items():
                 if k.lower() == 'authorization':
                     if not v.lower().startswith('bearer'):
                         raise ff.UnauthenticatedError()
@@ -56,14 +59,12 @@ class CognitoAuthenticator(ff.Handler, ff.LoggerAware):
                 scopes = list(map(lambda c: c.replace('/', '.').lower(), claims['scope'].split(' ')))
                 for scope in scopes:
                     if scope.startswith('tenant.'):
-                        message.headers['tenant'] = scope.split(':')[1]
+                        self._kernel.user.tenant = scope.split(':')[1]
                         break
 
+            self._kernel.user.scopes = scopes
             claims['scopes'] = scopes
-            self.debug('Scopes: %s', claims['scopes'])
-
-            self.debug('Got sub: %s', claims['sub'])
-            message.headers['decoded_token'] = claims
+            self._kernel.user.token = claims
             return True
 
-        return message.headers.get('secured') is not True
+        return self._kernel.secured is not True
