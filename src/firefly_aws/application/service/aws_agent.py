@@ -574,6 +574,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             DependsOn=[integration]
         ))
 
+        # Deprecated
         template.add_resource(Stage(
             f'{self._rest_api_name()}Stage',
             StageName='v2',
@@ -581,12 +582,32 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             AutoDeploy=True
         ))
 
+        # Deprecated
         template.add_resource(Deployment(
             f'{self._rest_api_name()}Deployment',
             ApiId=Ref(api),
             StageName='v2',
             DependsOn=[
                 f'{self._rest_api_name()}Stage',
+                self._route_name(),
+                self._integration_name(),
+                self._rest_api_name(),
+            ]
+        ))
+
+        template.add_resource(Stage(
+            f'{self._rest_api_name()}Stage1',
+            StageName='api',
+            ApiId=Ref(api),
+            AutoDeploy=True
+        ))
+
+        template.add_resource(Deployment(
+            f'{self._rest_api_name()}Deployment1',
+            ApiId=Ref(api),
+            StageName='api',
+            DependsOn=[
+                f'{self._rest_api_name()}Stage1',
                 self._route_name(),
                 self._integration_name(),
                 self._rest_api_name(),
