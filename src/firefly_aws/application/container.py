@@ -41,6 +41,7 @@ class Container(di.Container):
     lambda_executor: domain.LambdaExecutor = domain.LambdaExecutor
     jwt_decoder: domain.JwtDecoder = infra.CognitoJwtDecoder
     mutex: infra.DdbMutex = infra.DdbMutex
+    file_system: ff.FileSystem = infra.S3FileSystem
 
 
 if os.environ['ENV'] != 'local':

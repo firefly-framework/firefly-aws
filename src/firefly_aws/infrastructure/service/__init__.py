@@ -17,3 +17,4 @@ from .boto_s3_service import BotoS3Service
 from .cognito_jwt_decoder import CognitoJwtDecoder
 from .data_api import DataApi
 from .ddb_mutex import DdbMutex
+from .s3_file_system import S3FileSystem
