@@ -20,7 +20,6 @@ import io
 import json
 import os
 import re
-from pprint import pprint
 from typing import Union
 
 import firefly as ff
@@ -65,7 +64,8 @@ class LambdaExecutor(ff.DomainService):
     _kernel: ff.Kernel = None
 
     def __init__(self):
-        self._version_matcher = re.compile(r'^/v\d')
+        self._version_matcher = re.compile(r'^/v(\d)')
+        self._default_matcher = re.compile(r'^/api/')
 
     def run(self, event: dict, context: dict):
         self.debug('Event: %s', event)
@@ -115,7 +115,14 @@ class LambdaExecutor(ff.DomainService):
         }
 
     def _handle_http_event(self, event: dict):
-        route = self._version_matcher.sub('', event['rawPath'])
+        route = self._default_matcher.sub('/', event['rawPath'])
+        match = self._version_matcher.match(route)
+        if match is not None and len(match.groups()) > 0:
+            os.environ['API_VERSION'] = match.groups()[0]
+        else:
+            os.environ['API_VERSION'] = '1'
+
+        route = self._version_matcher.sub('', route)
         method = event['requestContext']['http']['method']
 
         if method.lower() == 'options':
@@ -141,7 +148,12 @@ class LambdaExecutor(ff.DomainService):
             self.info(f'Trying to match route: "{method} {route}"')
             endpoint, params = self._rest_router.match(route, method)
             if not endpoint:
-                return {'statusCode': 404}
+                return {
+                    'statusCode': 404,
+                    'headers': ACCESS_CONTROL_HEADERS,
+                    'body': None,
+                    'isBase64Encoded': False,
+                }
 
             if endpoint.message is not None:
                 message_name = endpoint.message if isinstance(endpoint.message, str) else endpoint.message.get_fqn()
@@ -173,10 +185,20 @@ class LambdaExecutor(ff.DomainService):
                     return self._handle_http_response(self.invoke(message_name, params))
             except ff.UnauthenticatedError:
                 self.info('Unauthenticated')
-                return {'statusCode': 403}
-            except ff.UnauthorizedError:
+                return {
+                    'statusCode': 403,
+                    'headers': ACCESS_CONTROL_HEADERS,
+                    'body': None,
+                    'isBase64Encoded': False,
+                }
+            except (ff.UnauthorizedError, ff.Unauthorized):
                 self.info('Unauthorized')
-                return {'statusCode': 401}
+                return {
+                    'statusCode': 401,
+                    'headers': ACCESS_CONTROL_HEADERS,
+                    'body': None,
+                    'isBase64Encoded': False,
+                }
             except ff.ApiError as e:
                 return self._handle_http_response(str(e), status_code=STATUS_CODES[e.__class__.__name__])
 
@@ -196,7 +218,11 @@ class LambdaExecutor(ff.DomainService):
         parser = MultipartParser(io.BytesIO(body), boundary)
         for part in parser:
             if part.file and part.filename is not None:
-                ret[part.name] = ff.File(name=part.filename, content=part.value)
+                ret[part.name] = ff.File(
+                    name=part.filename,
+                    content=part.raw,
+                    content_type=part.content_type
+                )
             else:
                 ret[part.name] = part.value
 

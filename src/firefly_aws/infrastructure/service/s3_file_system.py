@@ -1,26 +1,35 @@
 from __future__ import annotations
 
+import base64
+import binascii
+
 import firefly as ff
 
 
-class S3FileSystem(ff.FileSystem):
+class S3FileSystem(ff.FileSystem, ff.LoggerAware):
     _s3_client = None
     _bucket: str = None
 
-    def read(self, file_name: str):
+    def read(self, file_name: str) -> ff.File:
         bucket, file_name = self._parse_file_path(file_name)
         response = self._s3_client.get_object(
             Bucket=bucket,
             Key=file_name
         )
-        return response['Body'].read().decode('utf-8')
+        return ff.File(
+            name=file_name,
+            content=response['Body'].read().decode('utf-8'),
+            content_type=response.get('ContentType', None)
+        )
 
-    def write(self, file_name: str, data):
-        bucket, file_name = self._parse_file_path(file_name)
+    def write(self, file: ff.File, path: str = None):
+        path = '/'.join([(path or '').rstrip('/'), file.name])
+        bucket, file_name = self._parse_file_path(path)
         self._s3_client.put_object(
             Bucket=bucket,
             Key=file_name,
-            Body=data
+            Body=file.content,
+            ContentType=file.content_type
         )
 
     def _parse_file_path(self, path: str):
