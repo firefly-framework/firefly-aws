@@ -25,11 +25,14 @@ class S3FileSystem(ff.FileSystem, ff.LoggerAware):
     def write(self, file: ff.File, path: str = None):
         path = '/'.join([(path or '').rstrip('/'), file.name])
         bucket, file_name = self._parse_file_path(path)
+        params = {}
+        if file.content_type is not None:
+            params['ContentType'] = file.content_type
         self._s3_client.put_object(
             Bucket=bucket,
             Key=file_name,
             Body=file.content,
-            ContentType=file.content_type
+            **params
         )
 
     def _parse_file_path(self, path: str):
