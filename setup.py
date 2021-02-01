@@ -3,7 +3,7 @@ import setuptools
 
 setuptools.setup(
     name='firefly-aws',
-    version='1.1.26',
+    version='1.1.27',
     author="",
     author_email="",
     description="AWS extension for the Firefly framework.",
@@ -16,7 +16,7 @@ setuptools.setup(
         'cognitojwt>=1.2.2',
         'dateparser>=0.7.4',
         'firefly-dependency-injection>=1.0.0',
-        'firefly-framework>=1.1.34',
+        'firefly-framework>=1.1.40',
         'Jinja2>=2.11.1',
         'jinjasql>=0.1.8',
         'multipart>=0.2.3',

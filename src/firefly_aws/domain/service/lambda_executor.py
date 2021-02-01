@@ -230,8 +230,16 @@ class LambdaExecutor(ff.DomainService):
 
     def _handle_http_response(self, response: any, status_code: int = 200, headers: dict = None):
         headers = headers or {}
+        if isinstance(response, ff.Envelope):
+            headers = response.headers.copy()
+            if response.get_range() is not None:
+                range_ = response.get_range()
+                headers['content-range'] = f'{range_["unit"]} {range_["lower"]}-{range_["upper"]}/{range_["total"]}'
+                status_code = 206
+            body = self._serializer.serialize(response.unwrap())
+        else:
+            body = self._serializer.serialize(response)
         headers.update(ACCESS_CONTROL_HEADERS)
-        body = self._serializer.serialize(response)
         ret = {
             'statusCode': status_code,
             'headers': headers,
