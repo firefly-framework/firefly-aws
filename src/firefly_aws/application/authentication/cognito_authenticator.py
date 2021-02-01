@@ -55,11 +55,17 @@ class CognitoAuthenticator(ff.Handler, ff.LoggerAware):
                     self.debug('%s in %s', client_claim, groups)
                     if client_claim in groups:
                         scopes.append(client_claim)
+                    elif client_claim.startswith('tenant.'):
+                        tenant_id = client_claim.split(':')[1]
+                        self.debug('Setting tenant to %s', tenant_id)
+                        self._kernel.user.tenant = tenant_id
             elif claims['client_id'] == claims['sub']:
                 scopes = list(map(lambda c: c.replace('/', '.').lower(), claims['scope'].split(' ')))
                 for scope in scopes:
                     if scope.startswith('tenant.'):
-                        self._kernel.user.tenant = scope.split(':')[1]
+                        tenant_id = scope.split(':')[1]
+                        self.debug('Setting tenant to %s', tenant_id)
+                        self._kernel.user.tenant = tenant_id
                         break
 
             self._kernel.user.scopes = scopes
