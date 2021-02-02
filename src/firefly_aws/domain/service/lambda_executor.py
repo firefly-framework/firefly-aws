@@ -39,7 +39,8 @@ STATUS_CODES = {
 ACCESS_CONTROL_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization, Accept, Accept-Language, Content-Language, Content-Type',
+    'Access-Control-Allow-Headers': 'Authorization, Accept, Accept-Language, Content-Language, Content-Type, '
+                                    'Content-Range',
 }
 
 COGNITO_TRIGGERS = (
@@ -233,7 +234,9 @@ class LambdaExecutor(ff.DomainService):
         if isinstance(response, ff.Envelope):
             if response.get_range() is not None:
                 range_ = response.get_range()
-                headers['content-range'] = f'{range_["unit"]} {range_["lower"]}-{range_["upper"]}/{range_["total"]}'
+                headers['content-range'] = f'{range_["lower"]}-{range_["upper"]}/{range_["total"]}'
+                if 'unit' in range_:
+                    headers['content-range'] = f'{range_["unit"]} {headers["content-range"]}'
                 status_code = 206
             body = self._serializer.serialize(response.unwrap())
         else:
