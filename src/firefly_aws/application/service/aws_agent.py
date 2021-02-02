@@ -73,11 +73,11 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
     _sns_client = None
     _cloudformation_client = None
 
-    def __init__(self, env: str, account_id: str):
-        self._env = env
+    def __init__(self, account_id: str):
         self._account_id = account_id
 
     def __call__(self, deployment: ff.Deployment, **kwargs):
+        self._env = deployment.environment
         try:
             self._bucket = self._configuration.contexts.get('firefly_aws').get('bucket')
         except AttributeError:
