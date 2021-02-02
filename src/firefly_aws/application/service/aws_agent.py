@@ -722,7 +722,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
 
         defaults = {
             'PROJECT': self._project,
-            'ENV': self._env,
+            'FF_ENVIRONMENT': self._env,
             'ACCOUNT_ID': self._account_id,
             'CONTEXT': context.name,
             'REGION': self._region,
