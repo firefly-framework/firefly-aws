@@ -44,6 +44,6 @@ class Container(di.Container):
     file_system: ff.FileSystem = infra.S3FileSystem
 
 
-if os.environ['ENV'] != 'local':
+if os.environ['FF_ENVIRONMENT'] != 'local':
     Container.message_transport = infra.BotoMessageTransport
     Container.__annotations__['message_transport'] = ff.MessageTransport

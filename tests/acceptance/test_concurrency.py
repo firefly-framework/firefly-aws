@@ -15,14 +15,12 @@ def run_thread(num: int):
     from tests.acceptance.conftest import config
     from dotenv import load_dotenv
 
-    os.environ['ENV'] = 'dev'
+    os.environ['FF_ENVIRONMENT'] = 'dev'
 
     load_dotenv(dotenv_path=os.path.join(os.getcwd(), '../../.env'))
     load_dotenv(dotenv_path=os.path.join(os.getcwd(), '../../.env.dev'))
 
     c = config()
-    print("FUCK")
-    pprint(c)
     Container.configuration = lambda self: ffi.MemoryConfigurationFactory()(c)
     container = Container()
     container.kernel.boot()

@@ -10,7 +10,7 @@ from firefly_test.iam.domain.entity.role import Role
 from firefly_test.iam.domain.entity.scope import Scope
 from firefly_test.todo import TodoList
 
-os.environ['ENV'] = 'dev'
+os.environ['FF_ENVIRONMENT'] = 'dev'
 
 load_dotenv(dotenv_path=os.path.join(os.getcwd(), '../../.env'))
 load_dotenv(dotenv_path=os.path.join(os.getcwd(), '../../.env.dev'))
