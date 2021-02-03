@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from datetime import datetime
+from datetime import datetime, date
 from math import floor, ceil
 from typing import Type, Union, Callable, Tuple, List
 
@@ -274,6 +274,9 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
             t = 'booleanValue'
         elif type_ == 'bytes' or type_ is bytes:
             t = 'blobValue'
+        elif type_ == 'date' or type_ is date:
+            val = str(val)
+            th = 'DATE'
         elif type_ == 'datetime' or type_ is datetime:
             val = str(val).replace('T', ' ')
             th = 'TIMESTAMP'
