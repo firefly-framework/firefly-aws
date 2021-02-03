@@ -290,12 +290,16 @@ class LambdaExecutor(ff.DomainService):
 
     def _generate_cognito_trigger_messages(self, event: dict):
         if event['triggerSource'] in COGNITO_TRIGGERS:
-            return self._message_factory.command(
-                f'{os.environ.get("CONTEXT", "firefly_aws")}.{event["triggerSource"]}',
-                data={
-                    'event': event
-                }
-            )
+            try:
+                return self._message_factory.command(
+                    f'{os.environ.get("CONTEXT", "firefly_aws")}.{event["triggerSource"]}',
+                    data={
+                        'event': event
+                    }
+                )
+            except ff.ConfigurationError:
+                self.info('No handler configured for cognito event: %s', event["triggerSource"])
+                return False
 
         return False
 
