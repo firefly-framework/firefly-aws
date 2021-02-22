@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import ABC
 from datetime import datetime, date
-from math import floor, ceil
+from math import ceil
 from typing import Type, Union, Callable, Tuple, List
 
 import firefly as ff
@@ -57,6 +57,12 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         except domain.DocumentTooLarge:
             for e in entity:
                 self._insert_large_document(e)
+            return len(entity)
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'BadRequestException':
+                if 'duplicate key value violates unique constraint' in str(e):
+                    raise ffd.ConcurrentUpdateDetected()
+            raise
 
     def _all(self, entity_type: Type[ffd.Entity], criteria: ffd.BinaryOp = None, limit: int = None, offset: int = None,
              sort: Tuple[Union[str, Tuple[str, bool]]] = None, raw: bool = False, count: bool = False):
@@ -210,7 +216,7 @@ class DataApiStorageInterface(ffi.RdbStorageInterface, ABC):
         return result[0]['c']
 
     def _paginate(self, sql: str, params: list, entity: Type[ff.Entity], raw: bool = False):
-        count = self._execute(f'select count(1) from ({sql}) sub', params)[0]['count']
+        count = self._execute(f'select count(1) as count from ({sql}) sub', params)[0]['count']
         limit = 1000
         offset = 0
 
