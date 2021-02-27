@@ -23,3 +23,7 @@ class FireflyAwsError(Exception):
 class DocumentTooLarge(FireflyAwsError):
     def __init__(self, *args):
         Exception.__init__(self, *args)
+
+
+class LambdaTimedOut(FireflyAwsError):
+    pass

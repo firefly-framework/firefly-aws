@@ -18,8 +18,11 @@ import base64
 import inspect
 import io
 import json
+import math
 import os
 import re
+import signal
+from contextlib import contextmanager
 from typing import Union
 
 import firefly as ff
@@ -56,6 +59,18 @@ COGNITO_TRIGGERS = (
 )
 
 
+@contextmanager
+def time_limit(seconds):
+    def signal_handler(signum, frame):
+        raise domain.LambdaTimedOut('Time limit exceeded')
+    signal.signal(signal.SIGALRM, signal_handler)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+
+
 class LambdaExecutor(ff.DomainService):
     _serializer: ff.Serializer = None
     _message_factory: ff.MessageFactory = None
@@ -64,12 +79,25 @@ class LambdaExecutor(ff.DomainService):
     _s3_service: domain.S3Service = None
     _bucket: str = None
     _kernel: ff.Kernel = None
+    _handle_error: domain.HandleError = None
 
     def __init__(self):
         self._version_matcher = re.compile(r'^/v(\d)')
         self._default_matcher = re.compile(r'^/api/')
 
-    def run(self, event: dict, context: dict):
+    def run(self, event: dict, context):
+        try:
+            time = self._get_remaining_time(context)
+            if time is not None:
+                with time_limit(time):
+                    return self._do_run(event, context)
+            else:
+                return self._do_run(event, context)
+        except Exception as e:
+            self._handle_error(e, event, context)
+            raise e
+
+    def _do_run(self, event: dict, context):
         self.debug('Event: %s', event)
         self.debug('Context: %s', context)
 
@@ -83,31 +111,28 @@ class LambdaExecutor(ff.DomainService):
             self.info('SQS message')
             return self._handle_sqs_event(event)
 
-        try:
-            message = False
-            aws_message = False
-            if self._is_cognito_trigger_event(event):
-                aws_message = True
-                message = self._generate_cognito_trigger_messages(event)
-                if message is False:
-                    self.debug('Passing through cognito trigger event')
-                    return event
-
+        message = False
+        aws_message = False
+        if self._is_cognito_trigger_event(event):
+            aws_message = True
+            message = self._generate_cognito_trigger_messages(event)
             if message is False:
-                message = self._serializer.deserialize(json.dumps(event))
-            if isinstance(message, ff.Command):
-                try:
-                    return self._serializer.deserialize(
-                        self._serializer.serialize(self.invoke(message))
-                    )
-                except ff.ConfigurationError:
-                    if aws_message is True:
-                        return event
-                    raise
-            elif isinstance(message, ff.Query):
-                return self._serializer.deserialize(self._serializer.serialize(self.request(message)))
-        except:
-            pass
+                self.debug('Passing through cognito trigger event')
+                return event
+
+        if message is False:
+            message = self._serializer.deserialize(json.dumps(event))
+        if isinstance(message, ff.Command):
+            try:
+                return self._serializer.deserialize(
+                    self._serializer.serialize(self.invoke(message))
+                )
+            except ff.ConfigurationError:
+                if aws_message is True:
+                    return event
+                raise
+        elif isinstance(message, ff.Query):
+            return self._serializer.deserialize(self._serializer.serialize(self.request(message)))
 
         return {
             'statusCode': 200,
@@ -304,6 +329,11 @@ class LambdaExecutor(ff.DomainService):
             Key=key
         )
         return self._serializer.deserialize(response['Body'].read())
+
+    @staticmethod
+    def _get_remaining_time(context):
+        if context is not None:
+            return math.floor((context.get_remaining_time_in_millis() / 1000) * .9)
 
     def nack_message(self, record: dict):
         pass

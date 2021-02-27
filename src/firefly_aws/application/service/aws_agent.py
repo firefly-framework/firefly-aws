@@ -265,8 +265,6 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                 self._alert_topic_name(service.name),
                 TopicName=self._alert_topic_name(service.name)
             ))
-            self._add_error_alarm(template, f'{self._service_name(context.name)}Sync', context.name, alerts_topic)
-            self._add_error_alarm(template, f'{self._service_name(context.name)}Async', context.name, alerts_topic)
 
             if 'email' in self._aws_config.get('errors'):
                 template.add_resource(SubscriptionResource(
@@ -627,21 +625,6 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         else:
             self._create_stack(self._stack_name(), template)
 
-    def _add_error_alarm(self, template, function_name: str, context: str, topic):
-        template.add_resource(Alarm(
-            f'{function_name}ErrorAlarm',
-            AlarmActions=[self._alert_topic_arn(context)],
-            ComparisonOperator='GreaterThanThreshold',
-            EvaluationPeriods=1,
-            MetricName='Errors',
-            Namespace='AWS/Lambda',
-            Dimensions=[MetricDimension(Name='FunctionName', Value=function_name)],
-            Period=60,
-            Statistic='Sum',
-            Threshold=0,
-            DependsOn=[topic]
-        ))
-
     def _add_role(self, role_name: str, template):
         return template.add_resource(Role(
             role_name,
@@ -731,6 +714,9 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         }
         if env is not None:
             defaults.update(env)
+
+        if 'SLACK_ERROR_URL' in os.environ:
+            defaults['SLACK_ERROR_URL'] = os.environ.get('SLACK_ERROR_URL')
 
         return Environment(
             'LambdaEnvironment',
