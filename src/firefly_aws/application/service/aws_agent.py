@@ -267,13 +267,14 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             ))
 
             if 'email' in self._aws_config.get('errors'):
-                template.add_resource(SubscriptionResource(
-                    self._alarm_subscription_name(context.name),
-                    Protocol='email',
-                    Endpoint=self._aws_config.get('errors').get('email').get('recipients'),
-                    TopicArn=self._alert_topic_arn(context.name),
-                    DependsOn=[alerts_topic]
-                ))
+                for address in self._aws_config.get('errors').get('email').get('recipients').split(','):
+                    template.add_resource(SubscriptionResource(
+                        self._alarm_subscription_name(context.name),
+                        Protocol='email',
+                        Endpoint=address,
+                        TopicArn=self._alert_topic_arn(context.name),
+                        DependsOn=[alerts_topic]
+                    ))
 
         # Queues / Topics
 
