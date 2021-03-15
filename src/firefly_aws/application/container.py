@@ -27,20 +27,21 @@ import firefly_aws.domain as domain
 
 class Container(di.Container):
     # AWS Services
-    s3_client = lambda self: boto3.client('s3')
-    sns_client = lambda self: boto3.client('sns')
     cloudformation_client = lambda self: boto3.client('cloudformation')
+    ddb_client = lambda self: boto3.client('dynamodb')
     lambda_client = lambda self: boto3.client('lambda')
     sns_client = lambda self: boto3.client('sns')
     sqs_client = lambda self: boto3.client('sqs')
+    sqs_resource = lambda self: boto3.resource('sqs')
     rds_data_client = lambda self: boto3.client('rds-data')
-    ddb_client = lambda self: boto3.client('dynamodb')
+    s3_client = lambda self: boto3.client('s3')
 
     data_api: infra.DataApi = infra.DataApi
     s3_service: infra.BotoS3Service = infra.BotoS3Service
     lambda_executor: domain.LambdaExecutor = domain.LambdaExecutor
     jwt_decoder: domain.JwtDecoder = infra.CognitoJwtDecoder
     mutex: infra.DdbMutex = infra.DdbMutex
+    rate_limiter: infra.DdbRateLimiter = infra.DdbRateLimiter
     file_system: ff.FileSystem = infra.S3FileSystem
 
 

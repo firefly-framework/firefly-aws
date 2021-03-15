@@ -27,6 +27,7 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
     _serializer: ff.Serializer = None
     _lambda_client = None
     _sns_client = None
+    _sqs_resource = None
     _s3_client = None
     _bucket: str = None
 
@@ -60,21 +61,27 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
         return self._invoke_lambda(query)
 
     def _invoke_lambda(self, message: Union[Command, Query]):
-        async_ = False
-        if hasattr(message, '_async'):
-            async_ = getattr(message, '_async')
+        if hasattr(message, '_async') and getattr(message, '_async') is True:
+            return self._invoke_async(message)
 
         try:
-            response = self._lambda_client.invoke(
-                FunctionName=f'{self._service_name(message.get_context())}Sync',
-                InvocationType='RequestResponse' if async_ is False else 'Event',
-                LogType='None',
-                Payload=self._serializer.serialize(message)
+            response = ff.retry(
+                lambda: self._lambda_client.invoke(
+                    FunctionName=f'{self._service_name(message.get_context())}Sync',
+                    InvocationType='RequestResponse',
+                    LogType='None',
+                    Payload=self._serializer.serialize(message)
+                ),
+                wait=2
             )
         except ClientError as e:
             raise ff.MessageBusError(str(e))
 
         return self._serializer.deserialize(response['Payload'].read().decode('utf-8'))
+
+    def _invoke_async(self, message: Command):
+        queue = self._sqs_resource.get_queue_by_name(self._queue_name(message.get_context()))
+        queue.send_message(MessageBody=self._serializer.serialize(message))
 
     def _store_large_payloads_in_s3(self, payload: str):
         if len(payload) > 64_000:

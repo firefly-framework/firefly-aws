@@ -48,7 +48,7 @@ import firefly.infrastructure as ffi
 import inflection
 import yaml
 from botocore.exceptions import ClientError
-from troposphere.dynamodb import Table, AttributeDefinition, KeySchema
+from troposphere.dynamodb import Table, AttributeDefinition, KeySchema, TimeToLiveSpecification
 from troposphere.events import Target, Rule
 
 from firefly_aws import S3Service, ResourceNameAware
@@ -365,7 +365,11 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             KeySchema=[
                 KeySchema(AttributeName='pk', KeyType='HASH'),
                 KeySchema(AttributeName='sk', KeyType='RANGE'),
-            ]
+            ],
+            TimeToLiveSpecification=TimeToLiveSpecification(
+                AttributeName='TimeToLive',
+                Enabled=True
+            )
         ))
 
         template.add_output(Output(
