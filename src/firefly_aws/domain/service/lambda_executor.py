@@ -289,10 +289,10 @@ class LambdaExecutor(ff.DomainService):
     def _handle_sqs_event(self, event: dict):
         for record in event['Records']:
             body = self._serializer.deserialize(record['body'])
-            if isinstance(body, ff.Message):
-                message: ff.Command = body
-            else:
+            try:
                 message: Union[ff.Event, dict] = self._serializer.deserialize(body['Message'])
+            except TypeError:
+                message = body
 
             if isinstance(message, dict) and 'PAYLOAD_KEY' in message:
                 try:
