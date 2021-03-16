@@ -80,7 +80,7 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
         return self._serializer.deserialize(response['Payload'].read().decode('utf-8'))
 
     def _invoke_async(self, message: Command):
-        queue = self._sqs_resource.get_queue_by_name(self._queue_name(message.get_context()))
+        queue = self._sqs_resource.get_queue_by_name(QueueName=self._queue_name(message.get_context()))
         queue.send_message(MessageBody=self._serializer.serialize(message))
 
     def _store_large_payloads_in_s3(self, payload: str):
