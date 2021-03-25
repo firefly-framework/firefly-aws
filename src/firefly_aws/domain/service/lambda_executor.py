@@ -306,7 +306,10 @@ class LambdaExecutor(ff.DomainService):
                 return
 
             message.headers['external'] = True
-            self.dispatch(message)
+            if isinstance(message, ff.Command):
+                self.invoke(message)
+            else:
+                self.dispatch(message)
         if len(event['Records']) == 1:
             self.complete_handshake(event['Records'][0])
         else:
