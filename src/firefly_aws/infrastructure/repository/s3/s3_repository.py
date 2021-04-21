@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import List, Callable, Optional, Union
+from typing import List, Callable, Optional, Union, Tuple
 
 import firefly as ff
 import inflection
@@ -25,6 +25,7 @@ from firefly.domain.repository.repository import T
 
 class S3Repository(ff.Repository[T]):
     def __init__(self, s3_client, serializer: ff.Serializer, bucket: str, prefix: str = 'object-store/aggregates'):
+        super().__init__()
         self._s3_client = s3_client
         self._serializer = serializer
         self._bucket = bucket
@@ -70,8 +71,13 @@ class S3Repository(ff.Repository[T]):
         # TODO implement search criteria
         pass
 
-    def reduce(self, cb: Callable) -> Optional[T]:
-        # TODO implement search criteria
+    def sort(self, cb: Optional[Union[Callable, Tuple[Union[str, Tuple[str, bool]]]]], **kwargs):
+        pass
+
+    def clear(self):
+        pass
+
+    def destroy(self):
         pass
 
     def append(self, entity: T):

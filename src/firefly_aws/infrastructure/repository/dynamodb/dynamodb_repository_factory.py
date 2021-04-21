@@ -12,7 +12,27 @@
 #  You should have received a copy of the GNU General Public License along with Firefly. If not, see
 #  <http://www.gnu.org/licenses/>.
 
-from .cognito import *
-from .data_api import *
-from .dynamodb import *
-from .s3 import *
+from __future__ import annotations
+
+from typing import Type, TypeVar
+
+import firefly as ff
+import firefly_di as di
+
+from firefly_aws.infrastructure.repository.dynamodb.dynamodb_repository import DynamodbRepository
+
+E = TypeVar('E', bound=ff.Entity)
+
+
+class DynamodbRepositoryFactory(ff.RepositoryFactory):
+    _context_map: ff.ContextMap = None
+    _container: di.Container = None
+
+    def __init__(self, client):
+        self._client = client
+
+    def __call__(self, entity: Type[E]) -> ff.Repository:
+        class Repo(DynamodbRepository[entity]):
+            pass
+
+        return self._container.build(Repo)
