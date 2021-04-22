@@ -101,7 +101,8 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
 
     def _deploy_service(self, service: ff.Service):
         context = self._context_map.get_context(service.name)
-        self._package_and_deploy_code(context)
+        if self._aws_config.get('image_uri') is None:
+            self._package_and_deploy_code(context)
 
         template = Template()
         template.set_version('2010-09-09')
@@ -109,7 +110,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         memory_size = template.add_parameter(Parameter(
             f'{self._lambda_resource_name(service.name)}MemorySize',
             Type=NUMBER,
-            Default='3008'
+            Default=self._aws_config.get('memory', '3008')
         ))
 
         timeout_gateway = template.add_parameter(Parameter(
@@ -129,17 +130,30 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
 
         params = {
             'FunctionName': f'{self._service_name(service.name)}Sync',
-            'Code': Code(
-                S3Bucket=self._bucket,
-                S3Key=self._code_key
-            ),
-            'Handler': 'handlers.main',
             'Role': GetAtt(role_title, 'Arn'),
-            'Runtime': 'python3.7',
             'MemorySize': Ref(memory_size),
             'Timeout': Ref(timeout_gateway),
             'Environment': self._lambda_environment(context)
         }
+
+        image_uri = self._aws_config.get('image_uri')
+        if image_uri is not None:
+            params.update({
+                'Code': Code(
+                    ImageUri=image_uri
+                ),
+                'PackageType': 'Image',
+            })
+        else:
+            params.update({
+                'Code': Code(
+                    S3Bucket=self._bucket,
+                    S3Key=self._code_key
+                ),
+                'Runtime': 'python3.7',
+                'Handler': 'handlers.main',
+            })
+
         if self._security_group_ids and self._subnet_ids:
             params['VpcConfig'] = VPCConfig(
                 SecurityGroupIds=self._security_group_ids,
@@ -173,17 +187,29 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
 
         params = {
             'FunctionName': f'{self._service_name(service.name)}Async',
-            'Code': Code(
-                S3Bucket=self._bucket,
-                S3Key=self._code_key
-            ),
-            'Handler': 'handlers.main',
             'Role': GetAtt(role_title, 'Arn'),
-            'Runtime': 'python3.7',
             'MemorySize': Ref(memory_size),
             'Timeout': Ref(timeout_async),
             'Environment': self._lambda_environment(context)
         }
+
+        if image_uri is not None:
+            params.update({
+                'Code': Code(
+                    ImageUri=image_uri
+                ),
+                'PackageType': 'Image',
+            })
+        else:
+            params.update({
+                'Code': Code(
+                    S3Bucket=self._bucket,
+                    S3Key=self._code_key
+                ),
+                'Runtime': 'python3.7',
+                'Handler': 'handlers.main',
+            })
+
         if self._security_group_ids and self._subnet_ids:
             params['VpcConfig'] = VPCConfig(
                 SecurityGroupIds=self._security_group_ids,
@@ -461,6 +487,10 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         subprocess.call(['find', '.', '-name', '"*.so.*"', '-exec', 'strip', '{}', ';'])
         subprocess.call(['find', '.', '-name', '"*.pyc"', '-exec', 'rm', '-Rf', '{}', ';'])
         subprocess.call(['find', '.', '-name', 'tests', '-type', 'd', '-exec', 'rm', '-R', '{}', ';'])
+        for package in ('pandas', 'numpy', 'llvmlite'):
+            if os.path.isdir(package):
+                subprocess.call(['zip', '-r', package, package])
+                subprocess.call(['rm', '-Rf', package])
 
         file_name = self._code_key.split('/')[-1]
         subprocess.call(['zip', '-r', f'../{file_name}', '.'])
@@ -509,7 +539,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         memory_size = template.add_parameter(Parameter(
             f'{self._stack_name()}MemorySize',
             Type=NUMBER,
-            Default='3008'
+            Default=self._aws_config.get('memory', '3008')
         ))
 
         timeout_gateway = template.add_parameter(Parameter(

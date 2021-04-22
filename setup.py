@@ -21,7 +21,7 @@ setuptools.setup(
         'jinjasql>=0.1.8',
         'multipart>=0.2.3',
         'requests>=2.23.0',
-        'troposphere>=2.6.1',
+        'troposphere>=2.7.1',
     ],
     data_files=[('firefly_aws_config', ['firefly.yml'])],
     packages=setuptools.PEP420PackageFinder.find('src'),
