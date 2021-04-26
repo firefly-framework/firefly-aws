@@ -48,23 +48,22 @@ import firefly.infrastructure as ffi
 import inflection
 import yaml
 from botocore.exceptions import ClientError
-from troposphere.dynamodb import Table, AttributeDefinition, KeySchema, TimeToLiveSpecification
-from troposphere.events import Target, Rule
-
-from firefly_aws import S3Service, ResourceNameAware
-from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join, Equals
+from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join
 from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route
 from troposphere.awslambda import Function, Code, VPCConfig, Environment, Permission, EventSourceMapping
-from troposphere.cloudwatch import Alarm, MetricDimension
 from troposphere.constants import NUMBER
+from troposphere.dynamodb import Table, AttributeDefinition, KeySchema, TimeToLiveSpecification
+from troposphere.events import Target, Rule
 from troposphere.iam import Role, Policy
 from troposphere.s3 import Bucket, LifecycleRule, LifecycleConfiguration
 from troposphere.sns import Topic, SubscriptionResource
 from troposphere.sqs import Queue, QueuePolicy, RedrivePolicy
 
+from firefly_aws import S3Service, ResourceNameAware
+
 
 @ff.agent('aws')
-class AwsAgent(ff.ApplicationService, ResourceNameAware):
+class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
     _configuration: ff.Configuration = None
     _context_map: ff.ContextMap = None
     _registry: ff.Registry = None
@@ -404,6 +403,9 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             Description="Document table"
         ))
 
+        for cb in self._pre_deployment_hooks:
+            cb(template=template, context=context, env=self._env)
+
         self.info('Deploying stack')
         stack_name = self._stack_name(context.name)
         try:
@@ -414,6 +416,9 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                 self._create_stack(self._stack_name(context.name), template)
             else:
                 raise e
+
+        for cb in self._post_deployment_hooks:
+            cb(template=template, context=context, env=self._env)
 
         self._migrate_schema(context)
 
