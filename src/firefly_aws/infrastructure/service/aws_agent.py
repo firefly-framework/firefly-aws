@@ -90,12 +90,15 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         self._security_group_ids = aws_config.get('vpc', {}).get('security_group_ids')
         self._subnet_ids = aws_config.get('vpc', {}).get('subnet_ids')
 
+        self._template_key = f'cloudformation/templates/{inflection.dasherize(self._service_name())}.json'
         self._create_project_stack()
 
         for service in deployment.services:
             lambda_path = inflection.dasherize(self._lambda_resource_name(service.name))
+            template_path = inflection.dasherize(self._service_name(self._context_map.get_context(service.name).name))
             self._code_path = f'lambda/code/{lambda_path}'
             self._code_key = f'{self._code_path}/{datetime.now().isoformat()}.zip'
+            self._template_key = f'cloudformation/templates/{template_path}.json'
             self._deploy_service(service)
 
     def _deploy_service(self, service: ff.Service):
@@ -407,13 +410,26 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             cb(template=template, context=context, env=self._env)
 
         self.info('Deploying stack')
+        self._s3_client.put_object(
+            Body=template.to_json(),
+            Bucket=self._bucket,
+            Key=self._template_key
+        )
+        url = self._s3_client.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': self._bucket,
+                'Key': self._template_key
+            }
+        )
+
         stack_name = self._stack_name(context.name)
         try:
             self._cloudformation_client.describe_stacks(StackName=stack_name)
-            self._update_stack(self._stack_name(context.name), template)
+            self._update_stack(self._stack_name(context.name), url)
         except ClientError as e:
             if f'Stack with id {stack_name} does not exist' in str(e):
-                self._create_stack(self._stack_name(context.name), template)
+                self._create_stack(self._stack_name(context.name), url)
             else:
                 raise e
 
@@ -660,10 +676,23 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             ),
         ])
 
+        self._s3_client.put_object(
+            Body=template.to_json(),
+            Bucket=self._bucket,
+            Key=self._template_key
+        )
+        url = self._s3_client.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': self._bucket,
+                'Key': self._template_key
+            }
+        )
+
         if update:
-            self._update_stack(self._stack_name(), template)
+            self._update_stack(self._stack_name(), url)
         else:
-            self._create_stack(self._stack_name(), template)
+            self._create_stack(self._stack_name(), url)
 
     def _add_role(self, role_name: str, template):
         return template.add_resource(Role(
@@ -685,6 +714,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
                                     'cloudfront:CreateInvalidation',
                                     'ec2:*NetworkInterface',
                                     'ec2:DescribeNetworkInterfaces',
+                                    'glue:*',
                                     'lambda:InvokeFunction',
                                     'rds-data:*',
                                     's3:*',
@@ -712,19 +742,19 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             }
         ))
 
-    def _create_stack(self, stack_name: str, template: Template):
+    def _create_stack(self, stack_name: str, template: str):
         self._cloudformation_client.create_stack(
             StackName=stack_name,
-            TemplateBody=template.to_json(),
+            TemplateURL=template,
             Capabilities=['CAPABILITY_IAM']
         )
         self._wait_for_stack(stack_name)
 
-    def _update_stack(self, stack_name: str, template: Template):
+    def _update_stack(self, stack_name: str, template: str):
         try:
             self._cloudformation_client.update_stack(
                 StackName=stack_name,
-                TemplateBody=template.to_json(),
+                TemplateURL=template,
                 Capabilities=['CAPABILITY_IAM']
             )
             self._wait_for_stack(stack_name)

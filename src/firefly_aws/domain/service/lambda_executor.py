@@ -296,6 +296,7 @@ class LambdaExecutor(ff.DomainService):
 
             if isinstance(message, dict) and 'PAYLOAD_KEY' in message:
                 try:
+                    self.info('Payload key: %s', message['PAYLOAD_KEY'])
                     message = self.load_payload(message['PAYLOAD_KEY'])
                 except Exception as e:
                     self.nack_message(record)
