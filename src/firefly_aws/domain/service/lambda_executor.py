@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import base64
+import bz2
 import inspect
 import io
 import json
@@ -335,7 +336,10 @@ class LambdaExecutor(ff.DomainService):
             Bucket=self._bucket,
             Key=key
         )
-        return self._serializer.deserialize(response['Body'].read())
+        data = response['Body'].read()
+        if key.endswith('bz2'):
+            data = bz2.decompress(data)
+        return self._serializer.deserialize(data)
 
     @staticmethod
     def _get_remaining_time(context):
