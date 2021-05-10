@@ -292,6 +292,8 @@ class LambdaExecutor(ff.DomainService):
             body = self._serializer.deserialize(record['body'])
             try:
                 message: Union[ff.Event, dict] = self._serializer.deserialize(body['Message'])
+            except KeyError:
+                message = self._serializer.deserialize(body)
             except TypeError:
                 message = body
 
