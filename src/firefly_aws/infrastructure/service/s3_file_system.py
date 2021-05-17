@@ -60,10 +60,9 @@ class S3FileSystem(ff.FileSystem, ff.LoggerAware):
     def filter(self, path: str, fields: list, criteria: ff.BinaryOp):
         bucket, file_name = self._parse_file_path(path)
 
-        # sql = f"select {', '.join(fields)} from S3Object x where {where}"
-        sql = f"select {', '.join(fields)} from S3Object x"
+        sql = f"select {', '.join(fields)} from s3object s"
         if criteria is not None:
-            where, params = criteria.to_sql()
+            where, params = criteria.to_sql(prefix='s')
             for k, v in params.items():
                 if isinstance(v, str):
                     where = where.replace(f':{k}', f"'{v}'")
