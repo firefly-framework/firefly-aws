@@ -265,6 +265,9 @@ class LambdaExecutor(ff.DomainService):
                 if 'unit' in range_:
                     headers['content-range'] = f'{range_["unit"]} {headers["content-range"]}'
                 status_code = 206
+            elif 'location' in response.headers:
+                status_code = 303
+                headers['location'] = response.headers['location']
             body = self._serializer.serialize(response.unwrap())
         else:
             body = self._serializer.serialize(response)
