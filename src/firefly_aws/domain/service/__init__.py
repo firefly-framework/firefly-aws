@@ -15,4 +15,5 @@
 from .handle_error import HandleError
 from .jwt_decoder import JwtDecoder
 from .lambda_executor import LambdaExecutor
+from .prepare_s3_download import PrepareS3Download
 from .s3_service import S3Service
