@@ -57,7 +57,7 @@ class S3FileSystem(ff.FileSystem, ff.LoggerAware):
                         'size': item['Size'],
                         'last_modified': item['LastModified'],
                     }))
-            if response['IsTruncated']:
+            if response['IsTruncated'] and 'ContinuationToken' in response:
                 params['ContinuationToken'] = response['ContinuationToken']
             else:
                 break
