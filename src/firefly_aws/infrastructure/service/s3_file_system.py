@@ -18,9 +18,15 @@ class S3FileSystem(ff.FileSystem, ff.LoggerAware):
             Bucket=bucket,
             Key=file_name
         )
+
+        try:
+            content = response['Body'].read().decode('utf-8')
+        except UnicodeDecodeError:
+            content = response['Body'].read()
+
         return ff.File(
             name=file_name,
-            content=response['Body'].read().decode('utf-8'),
+            content=content,
             content_type=response.get('ContentType', None)
         )
 
