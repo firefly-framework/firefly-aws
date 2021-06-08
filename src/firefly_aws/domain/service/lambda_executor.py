@@ -81,6 +81,8 @@ class LambdaExecutor(ff.DomainService):
     _bucket: str = None
     _kernel: ff.Kernel = None
     _handle_error: domain.HandleError = None
+    _store_large_payloads_in_s3: domain.StoreLargePayloadsInS3 = None
+    _load_payload: domain.LoadPayload = None
 
     def __init__(self):
         self._version_matcher = re.compile(r'^/v(\d)')
@@ -126,14 +128,20 @@ class LambdaExecutor(ff.DomainService):
         if isinstance(message, ff.Command):
             try:
                 return self._serializer.deserialize(
-                    self._serializer.serialize(self.invoke(message))
+                    self._store_large_payloads_in_s3(
+                        self._serializer.serialize(self.invoke(message))
+                    )
                 )
             except ff.ConfigurationError:
                 if aws_message is True:
                     return event
                 raise
         elif isinstance(message, ff.Query):
-            return self._serializer.deserialize(self._serializer.serialize(self.request(message)))
+            return self._serializer.deserialize(
+                self._store_large_payloads_in_s3(
+                    self._serializer.serialize(self.request(message))
+                )
+            )
 
         return {
             'statusCode': 200,
@@ -303,7 +311,7 @@ class LambdaExecutor(ff.DomainService):
             if isinstance(message, dict) and 'PAYLOAD_KEY' in message:
                 try:
                     self.info('Payload key: %s', message['PAYLOAD_KEY'])
-                    message = self.load_payload(message['PAYLOAD_KEY'])
+                    message = self._load_payload(message['PAYLOAD_KEY'])
                 except Exception as e:
                     self.nack_message(record)
                     self.error(e)
@@ -335,16 +343,6 @@ class LambdaExecutor(ff.DomainService):
                 }
             )
         return False
-
-    def load_payload(self, key: str):
-        response = self._s3_client.get_object(
-            Bucket=self._bucket,
-            Key=key
-        )
-        data = response['Body'].read()
-        if key.endswith('bz2'):
-            data = bz2.decompress(data)
-        return self._serializer.deserialize(data)
 
     @staticmethod
     def _get_remaining_time(context):
