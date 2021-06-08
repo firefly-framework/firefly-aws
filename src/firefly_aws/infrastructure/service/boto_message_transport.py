@@ -26,6 +26,7 @@ from firefly import Query, Command, Event
 class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
     _serializer: ff.Serializer = None
     _store_large_payloads_in_s3: domain.StoreLargePayloadsInS3 = None
+    _load_payload: domain.LoadPayload = None
     _lambda_client = None
     _sns_client = None
     _sqs_resource = None
