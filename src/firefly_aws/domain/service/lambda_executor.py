@@ -269,10 +269,14 @@ class LambdaExecutor(ff.DomainService):
         if isinstance(response, ff.Envelope):
             if response.get_range() is not None:
                 range_ = response.get_range()
+                if range_['upper'] > range_['total']:
+                    range_['upper'] = range_['total']
                 headers['content-range'] = f'{range_["lower"]}-{range_["upper"]}/{range_["total"]}'
                 if 'unit' in range_:
                     headers['content-range'] = f'{range_["unit"]} {headers["content-range"]}'
                 status_code = 206
+                if range_['upper'] >= range_['total']:
+                    status_code = 200
             elif 'location' in response.headers:
                 status_code = 303
                 headers['location'] = response.headers['location']
