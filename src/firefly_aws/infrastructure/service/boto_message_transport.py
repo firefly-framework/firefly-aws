@@ -80,7 +80,7 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
             raise ff.MessageBusError(str(e))
 
         ret = self._serializer.deserialize(response['Payload'].read().decode('utf-8'))
-        if 'PAYLOAD_KEY' in ret:
+        if isinstance(ret, dict) and 'PAYLOAD_KEY' in ret:
             ret = self._load_payload(ret['PAYLOAD_KEY'])
 
         return ret
