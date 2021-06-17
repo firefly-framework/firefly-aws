@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import binascii
 from typing import Tuple, List
 
 import firefly as ff
@@ -14,10 +12,10 @@ class S3FileSystem(ff.FileSystem, ff.LoggerAware):
 
     def read(self, file_name: str) -> ff.File:
         bucket, file_name = self._parse_file_path(file_name)
-        response = self._s3_client.get_object(
-            Bucket=bucket,
-            Key=file_name
-        )
+        try:
+            response = self._s3_client.get_object(Bucket=bucket, Key=file_name)
+        except self._s3_client.exceptions.NoSuchKey:
+            raise ff.NoSuchFile()
 
         content = response['Body'].read()
         try:
