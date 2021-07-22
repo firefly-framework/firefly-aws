@@ -48,23 +48,22 @@ import firefly.infrastructure as ffi
 import inflection
 import yaml
 from botocore.exceptions import ClientError
-from troposphere.dynamodb import Table, AttributeDefinition, KeySchema, TimeToLiveSpecification
-from troposphere.events import Target, Rule
-
-from firefly_aws import S3Service, ResourceNameAware
-from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join, Equals
+from troposphere import Template, GetAtt, Ref, Parameter, Output, Export, ImportValue, Join
 from troposphere.apigatewayv2 import Api, Stage, Deployment, Integration, Route
 from troposphere.awslambda import Function, Code, VPCConfig, Environment, Permission, EventSourceMapping
-from troposphere.cloudwatch import Alarm, MetricDimension
 from troposphere.constants import NUMBER
+from troposphere.dynamodb import Table, AttributeDefinition, KeySchema, TimeToLiveSpecification
+from troposphere.events import Target, Rule
 from troposphere.iam import Role, Policy
 from troposphere.s3 import Bucket, LifecycleRule, LifecycleConfiguration
 from troposphere.sns import Topic, SubscriptionResource
 from troposphere.sqs import Queue, QueuePolicy, RedrivePolicy
 
+from firefly_aws import S3Service, ResourceNameAware
+
 
 @ff.agent('aws')
-class AwsAgent(ff.ApplicationService, ResourceNameAware):
+class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
     _configuration: ff.Configuration = None
     _context_map: ff.ContextMap = None
     _registry: ff.Registry = None
@@ -91,17 +90,21 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         self._security_group_ids = aws_config.get('vpc', {}).get('security_group_ids')
         self._subnet_ids = aws_config.get('vpc', {}).get('subnet_ids')
 
+        self._template_key = f'cloudformation/templates/{inflection.dasherize(self._service_name())}.json'
         self._create_project_stack()
 
         for service in deployment.services:
             lambda_path = inflection.dasherize(self._lambda_resource_name(service.name))
+            template_path = inflection.dasherize(self._service_name(self._context_map.get_context(service.name).name))
             self._code_path = f'lambda/code/{lambda_path}'
             self._code_key = f'{self._code_path}/{datetime.now().isoformat()}.zip'
+            self._template_key = f'cloudformation/templates/{template_path}.json'
             self._deploy_service(service)
 
     def _deploy_service(self, service: ff.Service):
         context = self._context_map.get_context(service.name)
-        self._package_and_deploy_code(context)
+        if self._aws_config.get('image_uri') is None:
+            self._package_and_deploy_code(context)
 
         template = Template()
         template.set_version('2010-09-09')
@@ -109,7 +112,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         memory_size = template.add_parameter(Parameter(
             f'{self._lambda_resource_name(service.name)}MemorySize',
             Type=NUMBER,
-            Default='3008'
+            Default=self._aws_config.get('memory', '3008')
         ))
 
         timeout_gateway = template.add_parameter(Parameter(
@@ -129,17 +132,30 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
 
         params = {
             'FunctionName': f'{self._service_name(service.name)}Sync',
-            'Code': Code(
-                S3Bucket=self._bucket,
-                S3Key=self._code_key
-            ),
-            'Handler': 'handlers.main',
             'Role': GetAtt(role_title, 'Arn'),
-            'Runtime': 'python3.7',
             'MemorySize': Ref(memory_size),
             'Timeout': Ref(timeout_gateway),
             'Environment': self._lambda_environment(context)
         }
+
+        image_uri = self._aws_config.get('image_uri')
+        if image_uri is not None:
+            params.update({
+                'Code': Code(
+                    ImageUri=image_uri
+                ),
+                'PackageType': 'Image',
+            })
+        else:
+            params.update({
+                'Code': Code(
+                    S3Bucket=self._bucket,
+                    S3Key=self._code_key
+                ),
+                'Runtime': 'python3.7',
+                'Handler': 'handlers.main',
+            })
+
         if self._security_group_ids and self._subnet_ids:
             params['VpcConfig'] = VPCConfig(
                 SecurityGroupIds=self._security_group_ids,
@@ -173,17 +189,29 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
 
         params = {
             'FunctionName': f'{self._service_name(service.name)}Async',
-            'Code': Code(
-                S3Bucket=self._bucket,
-                S3Key=self._code_key
-            ),
-            'Handler': 'handlers.main',
             'Role': GetAtt(role_title, 'Arn'),
-            'Runtime': 'python3.7',
             'MemorySize': Ref(memory_size),
             'Timeout': Ref(timeout_async),
             'Environment': self._lambda_environment(context)
         }
+
+        if image_uri is not None:
+            params.update({
+                'Code': Code(
+                    ImageUri=image_uri
+                ),
+                'PackageType': 'Image',
+            })
+        else:
+            params.update({
+                'Code': Code(
+                    S3Bucket=self._bucket,
+                    S3Key=self._code_key
+                ),
+                'Runtime': 'python3.7',
+                'Handler': 'handlers.main',
+            })
+
         if self._security_group_ids and self._subnet_ids:
             params['VpcConfig'] = VPCConfig(
                 SecurityGroupIds=self._security_group_ids,
@@ -378,16 +406,35 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             Description="Document table"
         ))
 
+        for cb in self._pre_deployment_hooks:
+            cb(template=template, context=context, env=self._env)
+
         self.info('Deploying stack')
+        self._s3_client.put_object(
+            Body=template.to_json(),
+            Bucket=self._bucket,
+            Key=self._template_key
+        )
+        url = self._s3_client.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': self._bucket,
+                'Key': self._template_key
+            }
+        )
+
         stack_name = self._stack_name(context.name)
         try:
             self._cloudformation_client.describe_stacks(StackName=stack_name)
-            self._update_stack(self._stack_name(context.name), template)
+            self._update_stack(self._stack_name(context.name), url)
         except ClientError as e:
             if f'Stack with id {stack_name} does not exist' in str(e):
-                self._create_stack(self._stack_name(context.name), template)
+                self._create_stack(self._stack_name(context.name), url)
             else:
                 raise e
+
+        for cb in self._post_deployment_hooks:
+            cb(template=template, context=context, env=self._env)
 
         self._migrate_schema(context)
 
@@ -461,6 +508,10 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         subprocess.call(['find', '.', '-name', '"*.so.*"', '-exec', 'strip', '{}', ';'])
         subprocess.call(['find', '.', '-name', '"*.pyc"', '-exec', 'rm', '-Rf', '{}', ';'])
         subprocess.call(['find', '.', '-name', 'tests', '-type', 'd', '-exec', 'rm', '-R', '{}', ';'])
+        for package in ('pandas', 'numpy', 'llvmlite'):
+            if os.path.isdir(package):
+                subprocess.call(['zip', '-r', package, package])
+                subprocess.call(['rm', '-Rf', package])
 
         file_name = self._code_key.split('/')[-1]
         subprocess.call(['zip', '-r', f'../{file_name}', '.'])
@@ -509,7 +560,7 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
         memory_size = template.add_parameter(Parameter(
             f'{self._stack_name()}MemorySize',
             Type=NUMBER,
-            Default='3008'
+            Default=self._aws_config.get('memory', '3008')
         ))
 
         timeout_gateway = template.add_parameter(Parameter(
@@ -625,10 +676,23 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             ),
         ])
 
+        self._s3_client.put_object(
+            Body=template.to_json(),
+            Bucket=self._bucket,
+            Key=self._template_key
+        )
+        url = self._s3_client.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': self._bucket,
+                'Key': self._template_key
+            }
+        )
+
         if update:
-            self._update_stack(self._stack_name(), template)
+            self._update_stack(self._stack_name(), url)
         else:
-            self._create_stack(self._stack_name(), template)
+            self._create_stack(self._stack_name(), url)
 
     def _add_role(self, role_name: str, template):
         return template.add_resource(Role(
@@ -647,9 +711,11 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
                             },
                             {
                                 'Action': [
+                                    'athena:*',
                                     'cloudfront:CreateInvalidation',
                                     'ec2:*NetworkInterface',
                                     'ec2:DescribeNetworkInterfaces',
+                                    'glue:*',
                                     'lambda:InvokeFunction',
                                     'rds-data:*',
                                     's3:*',
@@ -677,19 +743,19 @@ class AwsAgent(ff.ApplicationService, ResourceNameAware):
             }
         ))
 
-    def _create_stack(self, stack_name: str, template: Template):
+    def _create_stack(self, stack_name: str, template: str):
         self._cloudformation_client.create_stack(
             StackName=stack_name,
-            TemplateBody=template.to_json(),
+            TemplateURL=template,
             Capabilities=['CAPABILITY_IAM']
         )
         self._wait_for_stack(stack_name)
 
-    def _update_stack(self, stack_name: str, template: Template):
+    def _update_stack(self, stack_name: str, template: str):
         try:
             self._cloudformation_client.update_stack(
                 StackName=stack_name,
-                TemplateBody=template.to_json(),
+                TemplateURL=template,
                 Capabilities=['CAPABILITY_IAM']
             )
             self._wait_for_stack(stack_name)

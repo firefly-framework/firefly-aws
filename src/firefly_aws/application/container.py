@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import os
 
+from firefly.application import Container as RootContainer
+
 import boto3
 import firefly_di as di
 
@@ -48,3 +50,5 @@ class Container(di.Container):
 if os.environ['FF_ENVIRONMENT'] != 'local':
     Container.message_transport = infra.BotoMessageTransport
     Container.__annotations__['message_transport'] = ff.MessageTransport
+
+del RootContainer.file_system

@@ -25,6 +25,8 @@ from firefly import Query, Command, Event
 
 class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
     _serializer: ff.Serializer = None
+    _store_large_payloads_in_s3: domain.StoreLargePayloadsInS3 = None
+    _load_payload: domain.LoadPayload = None
     _lambda_client = None
     _sns_client = None
     _sqs_resource = None
@@ -77,22 +79,12 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
         except ClientError as e:
             raise ff.MessageBusError(str(e))
 
-        return self._serializer.deserialize(response['Payload'].read().decode('utf-8'))
+        ret = self._serializer.deserialize(response['Payload'].read().decode('utf-8'))
+        if isinstance(ret, dict) and 'PAYLOAD_KEY' in ret:
+            ret = self._load_payload(ret['PAYLOAD_KEY'])
+
+        return ret
 
     def _invoke_async(self, message: Command):
         queue = self._sqs_resource.get_queue_by_name(QueueName=self._queue_name(message.get_context()))
-        queue.send_message(MessageBody=self._serializer.serialize(message))
-
-    def _store_large_payloads_in_s3(self, payload: str):
-        if len(payload) > 64_000:
-            key = f'tmp/{str(uuid.uuid1())}.json'
-            self._s3_client.put_object(
-                Body=payload,
-                Bucket=self._bucket,
-                Key=key
-            )
-            return self._serializer.serialize({
-                'PAYLOAD_KEY': key,
-            })
-
-        return payload
+        queue.send_message(MessageBody=self._store_large_payloads_in_s3(self._serializer.serialize(message)))

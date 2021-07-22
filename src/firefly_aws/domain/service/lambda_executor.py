@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import base64
+import bz2
 import inspect
 import io
 import json
@@ -80,6 +81,8 @@ class LambdaExecutor(ff.DomainService):
     _bucket: str = None
     _kernel: ff.Kernel = None
     _handle_error: domain.HandleError = None
+    _store_large_payloads_in_s3: domain.StoreLargePayloadsInS3 = None
+    _load_payload: domain.LoadPayload = None
 
     def __init__(self):
         self._version_matcher = re.compile(r'^/v(\d)')
@@ -125,14 +128,20 @@ class LambdaExecutor(ff.DomainService):
         if isinstance(message, ff.Command):
             try:
                 return self._serializer.deserialize(
-                    self._serializer.serialize(self.invoke(message))
+                    self._store_large_payloads_in_s3(
+                        self._serializer.serialize(self.invoke(message))
+                    )
                 )
             except ff.ConfigurationError:
                 if aws_message is True:
                     return event
                 raise
         elif isinstance(message, ff.Query):
-            return self._serializer.deserialize(self._serializer.serialize(self.request(message)))
+            return self._serializer.deserialize(
+                self._store_large_payloads_in_s3(
+                    self._serializer.serialize(self.request(message))
+                )
+            )
 
         return {
             'statusCode': 200,
@@ -260,10 +269,15 @@ class LambdaExecutor(ff.DomainService):
         if isinstance(response, ff.Envelope):
             if response.get_range() is not None:
                 range_ = response.get_range()
+                if range_['upper'] > range_['total']:
+                    range_['upper'] = range_['total']
                 headers['content-range'] = f'{range_["lower"]}-{range_["upper"]}/{range_["total"]}'
                 if 'unit' in range_:
                     headers['content-range'] = f'{range_["unit"]} {headers["content-range"]}'
                 status_code = 206
+            if 'location' in response.headers:
+                status_code = 303
+                headers['location'] = response.headers['location']
             body = self._serializer.serialize(response.unwrap())
         else:
             body = self._serializer.serialize(response)
@@ -291,12 +305,15 @@ class LambdaExecutor(ff.DomainService):
             body = self._serializer.deserialize(record['body'])
             try:
                 message: Union[ff.Event, dict] = self._serializer.deserialize(body['Message'])
+            except KeyError:
+                message = self._serializer.deserialize(body)
             except TypeError:
                 message = body
 
             if isinstance(message, dict) and 'PAYLOAD_KEY' in message:
                 try:
-                    message = self.load_payload(message['PAYLOAD_KEY'])
+                    self.info('Payload key: %s', message['PAYLOAD_KEY'])
+                    message = self._load_payload(message['PAYLOAD_KEY'])
                 except Exception as e:
                     self.nack_message(record)
                     self.error(e)
@@ -328,13 +345,6 @@ class LambdaExecutor(ff.DomainService):
                 }
             )
         return False
-
-    def load_payload(self, key: str):
-        response = self._s3_client.get_object(
-            Bucket=self._bucket,
-            Key=key
-        )
-        return self._serializer.deserialize(response['Body'].read())
 
     @staticmethod
     def _get_remaining_time(context):

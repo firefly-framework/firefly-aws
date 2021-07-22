@@ -20,7 +20,7 @@ class DdbMutex(ff.Mutex):
                     Item={
                         'pk': {'S': key},
                         'sk': {'S': 'mutex'},
-                        'ttl': {'N': str(round((datetime.now() + timedelta(seconds=(60 * 15))).timestamp()))},
+                        'TimeToLive': {'N': str(round((datetime.now() + timedelta(seconds=(60 * 15))).timestamp()))},
                     },
                     ConditionExpression=f'attribute_not_exists(pk)'
                 )
