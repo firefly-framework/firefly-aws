@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from statistics import stdev, median
 
 import firefly as ff
 import psutil

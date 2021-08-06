@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from statistics import stdev, median
+from typing import List
 
 import firefly as ff
 
 class FindOutlierThreshold(ff.DomainService):
     
-    def __call__(self, memory_list, deviation):
+    def __call__(self, memory_list: List[int], deviation: int):
         sorted_memory_usage = sorted(memory_list)
         median_memory_usage = median(sorted_memory_usage)
 
@@ -33,7 +34,7 @@ class FindOutlierThreshold(ff.DomainService):
 
         return outlier_threshold
 
-    def _find_z_score_threshold(self, memory_list, deviation):
+    def _find_z_score_threshold(self, memory_list: List[int], deviation: int):
         standard_deviation = stdev(memory_list)
         average = sum(memory_list) / len(memory_list)
         outlier_threshold = (standard_deviation * deviation) + average
