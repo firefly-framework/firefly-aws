@@ -15,6 +15,7 @@
 from .check_resource_usage import CheckResourceUsage
 from .ddb_serializer import DdbDeserializer
 from .execution_context import ExecutionContext
+from .find_outlier_threshold import FindOutlierThreshold
 from .handle_error import HandleError
 from .jwt_decoder import JwtDecoder
 from .lambda_executor import LambdaExecutor
