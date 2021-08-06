@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from statistics import stdev, median
+from math import floor
 from typing import List
 
 import firefly as ff
@@ -20,7 +21,9 @@ class FindOutlierThreshold(ff.DomainService):
         # If more than 50% of our values are the same value, MAD will be 0. Then initiate backup plan with z_score (very rare edgecase)
         # Not the best case to use z-score, but good backup
         if median_absolute_deviation == 0:
-            outlier_threshold = self._find_z_score_threshold(memory_list)
+            # Outlier Threshold at 99.5% of runs if MAD is 0
+            ninety_nine_five_threshold = floor(0.995 * len(sorted_memory_usage))
+            outlier_threshold = sorted_memory_usage[ninety_nine_five_threshold]
         else:
             # 1.4826 is a constant linked to assumption of normally distributed data excluding outliers
             memory_mad = median_absolute_deviation * 1.4826
@@ -31,12 +34,5 @@ class FindOutlierThreshold(ff.DomainService):
                 if abs(memory_mad_relative_deviation) < 3.0:
                     #since we're iterating through a sorted list, the value can always be updated if true
                     outlier_threshold = value
-
-        return outlier_threshold
-
-    def _find_z_score_threshold(self, memory_list: List[int]):
-        standard_deviation = stdev(memory_list)
-        average = sum(memory_list) / len(memory_list)
-        outlier_threshold = (standard_deviation * 2.58) + average
 
         return outlier_threshold
