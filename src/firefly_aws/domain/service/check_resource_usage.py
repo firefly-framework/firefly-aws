@@ -58,7 +58,7 @@ class CheckResourceUsage(ff.DomainService):
         )
 
         # Using 2.58 as this deviation equates to 99.5%
-        outlier_threshold = self._find_outlier_threshold(stats['memory'], 2.58)
+        outlier_threshold = self._find_outlier_threshold(stats['memory'])
 
         if outlier_threshold > (memory_limit * .9): # If threshold is greater than 90% of memory_limit, then bump up memory tier
             if (len(self._memory_settings) - 1) < memory_index:
