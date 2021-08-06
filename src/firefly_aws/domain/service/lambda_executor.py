@@ -24,6 +24,7 @@ import os
 import re
 import signal
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Union
 
 import firefly as ff
@@ -83,6 +84,7 @@ class LambdaExecutor(ff.DomainService):
     _handle_error: domain.HandleError = None
     _store_large_payloads_in_s3: domain.StoreLargePayloadsInS3 = None
     _load_payload: domain.LoadPayload = None
+    _execution_context: domain.ExecutionContext = None
 
     def __init__(self):
         self._version_matcher = re.compile(r'^/v(\d)')
@@ -105,6 +107,9 @@ class LambdaExecutor(ff.DomainService):
         self.debug('Context: %s', context)
 
         self._kernel.reset()
+
+        self._execution_context.event = event
+        self._execution_context.context = context
 
         if 'requestContext' in event and 'http' in event['requestContext']:
             self.info('HTTP request')

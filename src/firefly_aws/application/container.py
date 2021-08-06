@@ -45,6 +45,7 @@ class Container(di.Container):
     mutex: infra.DdbMutex = infra.DdbMutex
     rate_limiter: infra.DdbRateLimiter = infra.DdbRateLimiter
     file_system: ff.FileSystem = infra.S3FileSystem
+    resource_monitor: domain.ResourceMonitor = infra.DdbResourceMonitor
 
 
 if os.environ['FF_ENVIRONMENT'] != 'local':
