@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from statistics import stdev
 
 import firefly as ff
 import psutil
@@ -17,6 +16,7 @@ class CheckResourceUsage(ff.DomainService):
     _message_transport: ff.MessageTransport = None
     _configuration: ff.Configuration = None
     _context: str = None
+    _find_outlier_threshold = domain.FindOutlierThreshold = None
 
     def __init__(self):
         context = self._configuration.contexts[self._context]
@@ -34,18 +34,8 @@ class CheckResourceUsage(ff.DomainService):
         if self._memory_settings is not None:
             memory_index = self._memory_settings.index(memory_limit)
 
-        memory_percent_used = psutil.Process(os.getpid()).memory_percent()
-        memory_used = memory_percent_used * memory_limit
-        stats = self._resource_monitor.record_execution(
-            str(message),
-            TIME_LIMIT - self._execution_context.context.get_remaining_time_in_millis(),
-            memory_used
-        )
-        standard_deviation = stdev(stats['memory'])
-        mean = sum(stats['memory']) / len(stats['memory'])
-        outlier_threshold = (standard_deviation * 2.58) + mean
-
-        if memory_used > outlier_threshold or requeue is True:
+        # Want to check for requeue early as we don't want to write an execution until it succeeds
+        if requeue is True:
             if memory_index is None or memory_index >= (len(self._memory_settings) - 1):
                 raise MemoryError()
             setattr(message, '_memory', self._memory_settings[memory_index + 1])
@@ -56,12 +46,26 @@ class CheckResourceUsage(ff.DomainService):
                 setattr(message, '_async', True)
                 self._message_transport.invoke(message)
 
-        elif outlier_threshold > (memory_limit * .9):
+            # Short circuit as to not write memory/time to DB for a failure
+            return
+
+        memory_percent_used = psutil.Process(os.getpid()).memory_percent()
+        memory_used = memory_percent_used * memory_limit
+        stats = self._resource_monitor.record_execution(
+            str(message),
+            TIME_LIMIT - self._execution_context.context.get_remaining_time_in_millis(),
+            memory_used
+        )
+
+        # Using 2.58 as this deviation equates to 99.5%
+        outlier_threshold = self._find_outlier_threshold(stats['memory'])
+
+        if outlier_threshold > (memory_limit * .9): # If threshold is greater than 90% of memory_limit, then bump up memory tier
             if (len(self._memory_settings) - 1) < memory_index:
                 self._resource_monitor.set_memory_level(str(message), self._memory_settings[memory_index + 1])
 
         elif self._memory_settings is not None and memory_index > 0:
             memory_index -= 1
             lower_max = self._memory_settings[memory_index]
-            if outlier_threshold > (lower_max * .9):
+            if outlier_threshold < (lower_max * .9): # If threshold is less than 90% of lower_max, then safe to drop down memory tier
                 self._resource_monitor.set_memory_level(str(message), self._memory_settings[memory_index])
