@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 import os
-from statistics import stdev
 from typing import Callable
 
 import firefly as ff
-import psutil
 from botocore.exceptions import EndpointConnectionError
 from firefly import domain as ffd
 
 import firefly_aws.domain as domain
 
-
-# TODO Make sure to set this env variable in the agent
 if os.environ.get('ADAPTIVE_MEMORY'):
     @ff.register_middleware(index=1, buses=['event', 'command'])
     class ResourceMonitoringMiddleware(ff.Middleware):

@@ -41,6 +41,7 @@ from __future__ import annotations
 import os
 import shutil
 from datetime import datetime
+from pprint import pprint
 from time import sleep
 
 import firefly as ff
@@ -71,6 +72,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
     _s3_service: S3Service = None
     _sns_client = None
     _cloudformation_client = None
+    _adaptive_memory: str = None
 
     def __init__(self, account_id: str):
         self._account_id = account_id
@@ -81,6 +83,11 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             self._bucket = self._configuration.contexts.get('firefly_aws').get('bucket')
         except AttributeError:
             raise ff.FrameworkError('No deployment bucket configured in firefly_aws')
+
+        memory_settings = self._configuration.contexts.get('firefly_aws').get('memory_settings')
+        if memory_settings is not None:
+            self._adaptive_memory = '1'
+            os.environ['ADAPTIVE_MEMORY'] = '1'
 
         self._deployment = deployment
         self._project = self._configuration.all.get('project')
@@ -112,7 +119,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         memory_size = template.add_parameter(Parameter(
             f'{self._lambda_resource_name(service.name)}MemorySize',
             Type=NUMBER,
-            Default=self._aws_config.get('memory', '3008')
+            Default=self._aws_config.get('memory_sync', '3008')
         ))
 
         timeout_gateway = template.add_parameter(Parameter(
@@ -187,8 +194,20 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             DependsOn=api_lambda
         ))
 
+        if self._adaptive_memory:
+            value = '3008' if not self._adaptive_memory else '128'
+            try:
+                value = int(self._aws_config.get('memory_async'))
+            except ValueError:
+                pass
+            memory_size = template.add_parameter(Parameter(
+                f'{self._lambda_resource_name(service.name)}MemorySizeAsync',
+                Type=NUMBER,
+                Default=value
+            ))
+
         params = {
-            'FunctionName': f'{self._service_name(service.name)}Async',
+            'FunctionName': self._lambda_function_name(service.name, 'Async'),
             'Role': GetAtt(role_title, 'Arn'),
             'MemorySize': Ref(memory_size),
             'Timeout': Ref(timeout_async),
@@ -218,9 +237,12 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
                 SubnetIds=self._subnet_ids
             )
         async_lambda = template.add_resource(Function(
-            f'{self._lambda_resource_name(service.name)}Async',
+            self._lambda_resource_name(service.name, type_='Async'),
             **params
         ))
+
+        if self._adaptive_memory:
+            self._add_adaptive_memory_functions(template, context, timeout_async, role_title, async_lambda)
 
         # Timers
         for cls, _ in context.command_handlers.items():
@@ -235,8 +257,8 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
 
                 target = Target(
                     f'{self._service_name(service.name)}AsyncTarget',
-                    Arn=GetAtt(f'{self._lambda_resource_name(service.name)}Async', 'Arn'),
-                    Id=f'{self._lambda_resource_name(service.name)}Async',
+                    Arn=GetAtt(self._lambda_resource_name(service.name, type_='Async'), 'Arn'),
+                    Id=self._lambda_resource_name(service.name, type_='Async'),
                     Input=f'{{"_context": "{context.name}", "_type": "command", "_name": "{cls.__name__}"}}'
                 )
                 rule = template.add_resource(Rule(
@@ -340,7 +362,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             BatchSize=1,
             Enabled=True,
             EventSourceArn=GetAtt(queue, 'Arn'),
-            FunctionName=f'{self._service_name(service.name)}Async',
+            FunctionName=self._lambda_function_name(service.name, 'Async'),
             DependsOn=[queue, async_lambda]
         ))
         topic = template.add_resource(Topic(
@@ -439,6 +461,75 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         self._migrate_schema(context)
 
         self.info('Done')
+
+    def _add_adaptive_memory_functions(self, template, context: ff.Context, timeout, role_title, async_lambda):
+        memory_settings = self._configuration.contexts.get('firefly_aws').get('memory_settings')
+        if memory_settings is None:
+            raise ff.ConfigurationError('To use adaptive memory, you must provide a list of memory_settings')
+
+        for memory in memory_settings:
+            memory_size = template.add_parameter(Parameter(
+                f'{self._lambda_resource_name(context.name)}{memory}MemorySize',
+                Type=NUMBER,
+                Default=str(memory)
+            ))
+
+            params = {
+                'FunctionName': self._lambda_function_name(context.name, 'Async', memory=memory),
+                'Role': GetAtt(role_title, 'Arn'),
+                'MemorySize': Ref(memory_size),
+                'Timeout': Ref(timeout),
+                'Environment': self._lambda_environment(context),
+                'DependsOn': async_lambda,
+            }
+
+            image_uri = self._aws_config.get('image_uri')
+            if image_uri is not None:
+                params.update({
+                    'Code': Code(
+                        ImageUri=image_uri
+                    ),
+                    'PackageType': 'Image',
+                })
+            else:
+                params.update({
+                    'Code': Code(
+                        S3Bucket=self._bucket,
+                        S3Key=self._code_key
+                    ),
+                    'Runtime': 'python3.7',
+                    'Handler': 'handlers.main',
+                })
+
+            if self._security_group_ids and self._subnet_ids:
+                params['VpcConfig'] = VPCConfig(
+                    SecurityGroupIds=self._security_group_ids,
+                    SubnetIds=self._subnet_ids
+                )
+
+            adaptive_memory_lambda = template.add_resource(Function(
+                self._lambda_resource_name(context.name, memory=memory),
+                **params
+            ))
+
+            queue = template.add_resource(Queue(
+                self._queue_name(context.name, memory=memory),
+                QueueName=self._queue_name(context.name, memory=memory),
+                VisibilityTimeout=905,
+                ReceiveMessageWaitTimeSeconds=20,
+                MessageRetentionPeriod=1209600,
+                DependsOn=[adaptive_memory_lambda]
+            ))
+            # self._queue_policy(template, queue, self._queue_name(context.name), subscriptions)
+
+            template.add_resource(EventSourceMapping(
+                f'{self._lambda_resource_name(context.name, memory=memory)}AsyncMapping',
+                BatchSize=1,
+                Enabled=True,
+                EventSourceArn=GetAtt(queue, 'Arn'),
+                FunctionName=self._lambda_function_name(context.name, 'Async', memory=memory),
+                DependsOn=[queue, adaptive_memory_lambda]
+            ))
 
     def _migrate_schema(self, context: ff.Context):
         for entity in context.entities:
@@ -560,7 +651,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         memory_size = template.add_parameter(Parameter(
             f'{self._stack_name()}MemorySize',
             Type=NUMBER,
-            Default=self._aws_config.get('memory', '3008')
+            Default=self._aws_config.get('memory_sync', '3008')
         ))
 
         timeout_gateway = template.add_parameter(Parameter(
@@ -752,6 +843,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         self._wait_for_stack(stack_name)
 
     def _update_stack(self, stack_name: str, template: str):
+
         try:
             self._cloudformation_client.update_stack(
                 StackName=stack_name,
@@ -782,6 +874,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             'REGION': self._region,
             'BUCKET': self._bucket,
             'DDB_TABLE': self._ddb_table_name(context.name),
+            'ADAPTIVE_MEMORY': self._adaptive_memory,
         }
         if env is not None:
             defaults.update(env)

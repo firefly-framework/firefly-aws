@@ -1,22 +1,23 @@
 from __future__ import annotations
 
 import os
-from functools import cache
+from functools import lru_cache
 from typing import Callable
 
 import firefly as ff
-from firefly import domain as ffd
 
-import firefly_aws.domain as domain
+from ...domain.resource_name_aware import ResourceNameAware
+from ...domain.service.execution_context import ExecutionContext
+from ...domain.service.resource_monitor import ResourceMonitor
 
 if os.environ.get('ADAPTIVE_MEMORY'):
     @ff.register_middleware(index=0, buses=['event', 'command'])
-    class AdaptiveMemoryRoutingMiddleware(ff.Middleware, domain.ResourceNameAware):
-        _resource_monitor: domain.ResourceMonitor = None
-        _execution_context: domain.ExecutionContext = None
+    class AdaptiveMemoryRoutingMiddleware(ff.Middleware, ResourceNameAware):
+        _resource_monitor: ResourceMonitor = None
+        _execution_context: ExecutionContext = None
         _context: str = None
 
-        def __call__(self, message: ffd.Message, next_: Callable) -> ffd.Message:
+        def __call__(self, message: ff.Message, next_: Callable) -> ff.Message:
             function_name = self._lambda_function_name(self._context, 'Async')
             if self._execution_context.context.function_name == function_name:
                 if not hasattr(message, '_memory'):
@@ -34,6 +35,6 @@ if os.environ.get('ADAPTIVE_MEMORY'):
             elif isinstance(message, ff.Command):
                 self.invoke(message)
 
-        @cache
+        @lru_cache(maxsize=None)
         def _get_memory_level(self, message: str):
             return self._resource_monitor.get_memory_level(message)

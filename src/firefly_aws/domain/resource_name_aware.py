@@ -15,9 +15,10 @@ class ResourceNameAware(ABC):
         slug = f'{self._project}_{self._ff_environment}_{context}'.rstrip('_')
         return f'{inflection.camelize(inflection.underscore(slug))}'
 
-    def _lambda_resource_name(self, name: str, memory: int = None):
+    def _lambda_resource_name(self, name: str, memory: int = None, type_: str = None):
         memory = str(memory or '')
-        return f'{self._service_name(name)}{memory}Function'
+        type_ = str(type_ or '')
+        return f'{self._service_name(name)}{memory}Function{type_}'
 
     def _lambda_function_name(self, context: str, type_: str, memory: int = None):
         memory = str(memory or '')
