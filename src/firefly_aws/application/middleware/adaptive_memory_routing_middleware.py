@@ -19,7 +19,7 @@ if os.environ.get('ADAPTIVE_MEMORY'):
         _context: str = None
 
         def __init__(self):
-            context = self._configuration.contexts[self._context]
+            context = self._configuration.contexts['firefly_aws']
             if context.get('memory') == 'adaptive':
                 self._memory_settings = sorted(list(map(int, context.get('memory_settings'))))
                 if self._memory_settings is None:
