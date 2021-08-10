@@ -15,8 +15,8 @@ class CheckResourceUsage(ff.DomainService):
     _execution_context: domain.ExecutionContext = None
     _message_transport: ff.MessageTransport = None
     _configuration: ff.Configuration = None
+    _find_outlier_threshold: domain.FindOutlierThreshold = None
     _context: str = None
-    _find_outlier_threshold = domain.FindOutlierThreshold = None
 
     def __init__(self):
         context = self._configuration.contexts['firefly_aws']
