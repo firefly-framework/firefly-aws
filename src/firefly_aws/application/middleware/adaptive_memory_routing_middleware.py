@@ -12,7 +12,7 @@ from ...domain.service.resource_monitor import ResourceMonitor
 
 if os.environ.get('ADAPTIVE_MEMORY'):
     @ff.register_middleware(index=0, buses=['event', 'command'])
-    class AdaptiveMemoryRoutingMiddleware(ff.Middleware, ResourceNameAware):
+    class AdaptiveMemoryRoutingMiddleware(ff.Middleware, ResourceNameAware, ff.SystemBusAware):
         _resource_monitor: ResourceMonitor = None
         _execution_context: ExecutionContext = None
         _configuration: ff.Configuration = None
