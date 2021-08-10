@@ -68,9 +68,7 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
 
     def _invoke_lambda(self, message: Union[Command, Query]):
         if hasattr(message, '_async') and getattr(message, '_async') is True:
-            print('async')
             return self._enqueue_message(message)
-        print('sync')
 
         try:
             response = ff.retry(
@@ -98,5 +96,4 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
         queue = self._sqs_resource.get_queue_by_name(
             QueueName=self._queue_name(context or message.get_context(), memory=memory)
         )
-        print(queue)
         queue.send_message(MessageBody=self._store_large_payloads_in_s3(self._serializer.serialize(message)))
