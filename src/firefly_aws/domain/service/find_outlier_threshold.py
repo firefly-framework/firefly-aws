@@ -30,7 +30,7 @@ class FindOutlierThreshold(ff.DomainService):
             memory_mad = float(median_absolute_deviation) * 1.4826
 
             for value in sorted_memory_usage:
-                memory_mad_relative_deviation = (value - median_memory_usage) / memory_mad
+                memory_mad_relative_deviation = float(value - median_memory_usage) / memory_mad
                 # Any relative deviation greater than 3.0 is an outlier
                 if abs(memory_mad_relative_deviation) < 3.0:
                     # since we're iterating through a sorted list, the value can always be updated if true
