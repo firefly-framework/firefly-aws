@@ -12,9 +12,10 @@ from ...domain.service.resource_monitor import ResourceMonitor
 
 if os.environ.get('ADAPTIVE_MEMORY'):
     @ff.register_middleware(index=0, buses=['event', 'command'])
-    class AdaptiveMemoryRoutingMiddleware(ff.Middleware, ResourceNameAware, ff.SystemBusAware):
+    class AdaptiveMemoryRoutingMiddleware(ff.Middleware, ResourceNameAware):
         _resource_monitor: ResourceMonitor = None
         _execution_context: ExecutionContext = None
+        _message_transport: ff.MessageTransport = None
         _configuration: ff.Configuration = None
         _context: str = None
 
@@ -46,9 +47,9 @@ if os.environ.get('ADAPTIVE_MEMORY'):
 
         def _enqueue_message(self, message: ff.Message):
             if isinstance(message, ff.Event):
-                self.dispatch(message)
+                self._message_transport.dispatch(message)
             elif isinstance(message, ff.Command):
-                self.invoke(message)
+                self._message_transport.invoke(message)
 
         @lru_cache(maxsize=None)
         def _get_memory_level(self, message: str):
