@@ -13,5 +13,6 @@
 #  <http://www.gnu.org/licenses/>.
 
 from .authentication import *
-from .service import *
 from .container import Container
+from .middleware import *
+from .service import *

@@ -19,7 +19,10 @@ if os.environ.get('ADAPTIVE_MEMORY'):
 
         def __call__(self, message: ff.Message, next_: Callable) -> ff.Message:
             function_name = self._lambda_function_name(self._context, 'Async')
-            if self._execution_context.context.function_name == function_name:
+            if self._execution_context.context:
+                print(function_name)
+                print(self._execution_context.context.function_name)
+            if self._execution_context.context and self._execution_context.context.function_name == function_name:
                 if not hasattr(message, '_memory'):
                     setattr(message, '_memory', self._get_memory_level(str(message)))
                 self._enqueue_message(message)

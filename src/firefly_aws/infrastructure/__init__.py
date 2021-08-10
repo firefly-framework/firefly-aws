@@ -12,6 +12,5 @@
 #  You should have received a copy of the GNU General Public License along with Firefly. If not, see
 #  <http://www.gnu.org/licenses/>.
 
-from .middleware import *
 from .repository import *
 from .service import *
