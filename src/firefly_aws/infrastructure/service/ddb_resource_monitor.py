@@ -38,7 +38,7 @@ class DdbResourceMonitor(domain.ResourceMonitor):
             }
         )
 
-        return self._ddb_deserializer.deserialize(response['Item'])
+        return self._ddb_deserializer.deserialize(response['Item']) if 'Item' in response else None
 
     def set_memory_level(self, message: str, memory: int):
         self._ddb_client.update_item(
@@ -64,4 +64,4 @@ class DdbResourceMonitor(domain.ResourceMonitor):
             }
         )
 
-        return self._ddb_deserializer.deserialize(response['Item'])['memory_level']
+        return self._ddb_deserializer.deserialize(response['Item'])['memory_level'] if 'Item' in response else None
