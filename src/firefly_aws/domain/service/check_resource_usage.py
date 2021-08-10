@@ -28,6 +28,9 @@ class CheckResourceUsage(ff.DomainService):
                 )
 
     def __call__(self, message: ff.Message, requeue: bool, **kwargs):
+        if not self._execution_context.context:
+            return
+
         memory_index = None
         memory_limit = self._execution_context.context.memory_limit_in_mb
 
