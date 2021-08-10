@@ -27,7 +27,7 @@ class FindOutlierThreshold(ff.DomainService):
             outlier_threshold = sorted_memory_usage[ninety_nine_five_threshold]
         else:
             # 1.4826 is a constant linked to assumption of normally distributed data excluding outliers
-            memory_mad = median_absolute_deviation * 1.4826
+            memory_mad = float(median_absolute_deviation) * 1.4826
 
             for value in sorted_memory_usage:
                 memory_mad_relative_deviation = (value - median_memory_usage) / memory_mad
