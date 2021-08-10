@@ -35,7 +35,7 @@ class CheckResourceUsage(ff.DomainService):
         memory_limit = self._execution_context.context.memory_limit_in_mb
 
         if self._memory_settings is not None:
-            memory_index = self._memory_settings.index(memory_limit)
+            memory_index = self._memory_settings.index(int(memory_limit))
 
         # Want to check for requeue early as we don't want to write an execution until it succeeds
         if requeue is True:
