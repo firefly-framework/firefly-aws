@@ -52,8 +52,8 @@ class CheckResourceUsage(ff.DomainService):
             # Short circuit as to not write memory/time to DB for a failure
             return
 
-        memory_percent_used = psutil.Process(os.getpid()).memory_percent()
-        memory_used = memory_percent_used * memory_limit
+        memory_percent_used = psutil.Process(os.getpid()).memory_percent() / 100
+        memory_used = memory_percent_used * float(memory_limit)
         stats = self._resource_monitor.record_execution(
             str(message),
             TIME_LIMIT - self._execution_context.context.get_remaining_time_in_millis(),
