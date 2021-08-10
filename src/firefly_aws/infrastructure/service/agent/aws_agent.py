@@ -195,7 +195,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         ))
 
         if self._adaptive_memory:
-            value = '3008' if not self._adaptive_memory else '128'
+            value = '3008' if not self._adaptive_memory else '256'
             try:
                 value = int(self._aws_config.get('memory_async'))
             except ValueError:
