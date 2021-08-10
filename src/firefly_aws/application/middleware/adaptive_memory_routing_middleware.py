@@ -29,16 +29,28 @@ if os.environ.get('ADAPTIVE_MEMORY'):
                     )
 
         def __call__(self, message: ff.Message, next_: Callable) -> ff.Message:
+            print("1")
             function_name = self._lambda_function_name(self._context, 'Async')
+            print("2")
             if self._execution_context.context and self._execution_context.context.function_name == function_name:
+                print("3")
                 if not hasattr(message, '_memory'):
+                    print("4")
                     memory = self._get_memory_level(str(message))
+                    print("5")
                     if memory is None:
+                        print("6")
                         setattr(message, '_memory', str(self._memory_settings[0]))
+                        print("7")
                         self._get_memory_level.cache_clear()
+                        print("8")
                     else:
+                        print("9")
                         setattr(message, '_memory', self._get_memory_level(str(message)))
+                        print("10")
+                print("11")
                 self._enqueue_message(message)
+                print("12")
 
                 return message
 
@@ -47,8 +59,10 @@ if os.environ.get('ADAPTIVE_MEMORY'):
 
         def _enqueue_message(self, message: ff.Message):
             if isinstance(message, ff.Event):
+                print("13")
                 self._message_transport.dispatch(message)
             elif isinstance(message, ff.Command):
+                print("14")
                 self._message_transport.invoke(message)
 
         @lru_cache(maxsize=None)
