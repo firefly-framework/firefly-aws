@@ -100,7 +100,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         self._subnet_ids = aws_config.get('vpc', {}).get('subnet_ids')
 
         self._template_key = f'cloudformation/templates/{inflection.dasherize(self._service_name())}.json'
-        # self._create_project_stack()
+        self._create_project_stack()
 
         for service in deployment.services:
             lambda_path = inflection.dasherize(self._lambda_resource_name(service.name))
