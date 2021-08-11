@@ -37,6 +37,7 @@ class Container(di.Container):
     sqs_resource = lambda self: boto3.resource('sqs')
     rds_data_client = lambda self: boto3.client('rds-data')
     s3_client = lambda self: boto3.client('s3')
+    kinesis_client = lambda self: boto3.client('kinesis')
 
     data_api: infra.DataApi = infra.DataApi
     s3_service: infra.BotoS3Service = infra.BotoS3Service

@@ -85,6 +85,7 @@ class LambdaExecutor(ff.DomainService):
     _store_large_payloads_in_s3: domain.StoreLargePayloadsInS3 = None
     _load_payload: domain.LoadPayload = None
     _execution_context: domain.ExecutionContext = None
+    _context: str = None
 
     def __init__(self):
         self._version_matcher = re.compile(r'^/v(\d)')
@@ -115,9 +116,9 @@ class LambdaExecutor(ff.DomainService):
             self.info('HTTP request')
             return self._handle_http_event(event)
 
-        if 'Records' in event and 'aws:sqs' == event['Records'][0].get('eventSource'):
-            self.info('SQS message')
-            return self._handle_sqs_event(event)
+        if 'Records' in event and event['Records'][0].get('eventSource') in ('aws:sqs', 'aws:kinesis'):
+            self.info('Async message')
+            return self._handle_async_event(event)
 
         message = False
         aws_message = False
@@ -305,9 +306,13 @@ class LambdaExecutor(ff.DomainService):
         self.info(f'Proxy Response: %s', ret)
         return ret
 
-    def _handle_sqs_event(self, event: dict):
+    def _handle_async_event(self, event: dict):
         for record in event['Records']:
-            body = self._serializer.deserialize(record['body'])
+            if 'kinesis' in record:
+                body = self._serializer.deserialize(record['kinesis']['data'])
+            else:
+                body = self._serializer.deserialize(record['body'])
+
             try:
                 message: Union[ff.Event, dict] = self._serializer.deserialize(body['Message'])
             except KeyError:
@@ -326,6 +331,9 @@ class LambdaExecutor(ff.DomainService):
             if message is None:
                 self.info('Got a null message')
                 return
+
+            if 'kinesis' in record:
+                message = self._message_factory.command('firefly_aws.UpdateResourceSettings', message)
 
             message.headers['external'] = True
             if isinstance(message, ff.Command):

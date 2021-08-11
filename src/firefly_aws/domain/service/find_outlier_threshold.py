@@ -12,11 +12,8 @@ class FindOutlierThreshold(ff.DomainService):
     def __call__(self, memory_list: List[int]):
         sorted_memory_usage = sorted(memory_list)
         median_memory_usage = median(sorted_memory_usage)
-
         absolute_deviation_from_median = [abs(value - median_memory_usage) for value in sorted_memory_usage]
-        
         median_absolute_deviation = median(absolute_deviation_from_median)
-
         outlier_threshold = 0
         
         # If more than 50% of our values are the same value, MAD will be 0. Then initiate backup plan with z_score

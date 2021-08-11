@@ -59,6 +59,8 @@ from troposphere.iam import Role, Policy
 from troposphere.s3 import Bucket, LifecycleRule, LifecycleConfiguration
 from troposphere.sns import Topic, SubscriptionResource
 from troposphere.sqs import Queue, QueuePolicy, RedrivePolicy
+import troposphere.kinesis as kinesis
+import troposphere.kinesisanalyticsv2 as analytics
 
 from firefly_aws import S3Service, ResourceNameAware
 
@@ -98,7 +100,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         self._subnet_ids = aws_config.get('vpc', {}).get('subnet_ids')
 
         self._template_key = f'cloudformation/templates/{inflection.dasherize(self._service_name())}.json'
-        self._create_project_stack()
+        # self._create_project_stack()
 
         for service in deployment.services:
             lambda_path = inflection.dasherize(self._lambda_resource_name(service.name))
@@ -135,7 +137,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         ))
 
         role_title = f'{self._lambda_resource_name(service.name)}ExecutionRole'
-        self._add_role(role_title, template)
+        role = self._add_role(role_title, template)
 
         params = {
             'FunctionName': f'{self._service_name(service.name)}Sync',
@@ -243,6 +245,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
 
         if self._adaptive_memory:
             self._add_adaptive_memory_functions(template, context, timeout_async, role_title, async_lambda)
+            self._add_adaptive_memory_streams(template, context, async_lambda, role)
 
         # Timers
         for cls, _ in context.command_handlers.items():
@@ -461,6 +464,85 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         self._migrate_schema(context)
 
         self.info('Done')
+
+    def _add_adaptive_memory_streams(self, template, context: ff.Context, lambda_function, role):
+        stream = template.add_resource(kinesis.Stream(
+            self._stream_resource_name(context.name),
+            Name="METRICS_INPUT_STREAM",
+            ShardCount=1
+        ))
+
+        analytics_stream = template.add_resource(analytics.Application(
+            self._analytics_application_resource_name(context.name),
+            ApplicationName=self._analytics_application_resource_name(context.name),
+            ApplicationConfiguration=analytics.ApplicationConfiguration(
+                ApplicationCodeConfiguration=analytics.ApplicationCodeConfiguration(
+                    CodeContent=analytics.CodeContent(
+                        TextContent=f"""
+                            CREATE OR REPLACE STREAM "DESTINATION_STREAM" (
+                                message CHAR(128),
+                                up BIGINT
+                            );
+                            
+                            CREATE OR REPLACE PUMP "STREAM_PUMP" AS
+                                INSERT INTO "DESTINATION_STREAM"
+                                    SELECT STREAM 
+                                        MAX(message), 
+                                        CASE WHEN (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory) THEN 1 ELSE 0
+                                    FROM "METRICS_INPUT_STREAM_001"
+                                    WHERE (
+                                        (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory)
+                                        OR (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) < (.8 * COALESCE(prev_memory_tier, 1000000))
+                                    )
+                                        AND event_type = 'resource-usage' 
+                                    WINDOW WIN AS (
+                                        RANGE INTERVAL '1' DAY PRECEDING
+                                    )
+                            ;
+                        """
+                    ),
+                    CodeContentType="PLAINTEXT"
+                ),
+                SqlApplicationConfiguration=analytics.SqlApplicationConfiguration(
+                    Inputs=[analytics.Input(
+                        InputSchema=analytics.InputSchema(
+                            RecordColumns=[
+                                analytics.RecordColumn(Mapping='event_type', Name='event_type', SqlType='CHAR(64)'),
+                                analytics.RecordColumn(Mapping='message', Name='message', SqlType='CHAR(128)'),
+                                analytics.RecordColumn(Mapping='memory_used', Name='memory_used', SqlType='NUMERIC'),
+                                analytics.RecordColumn(Mapping='run_time', Name='run_time', SqlType='NUMERIC'),
+                                analytics.RecordColumn(Mapping='max_memory', Name='max_memory', SqlType='NUMERIC'),
+                                analytics.RecordColumn(Mapping='prev_memory_tier', Name='prev_memory_tier', SqlType='NUMERIC'),
+                            ],
+                            RecordFormat=analytics.RecordFormat(
+                                RecordFormatType="JSON"
+                            ),
+                        ),
+                        KinesisStreamsInput=analytics.KinesisStreamsInput(
+                            ResourceARN=GetAtt(stream, 'Arn'),
+                        ),
+                        NamePrefix="METRICS_INPUT_STREAM"
+                    )]
+                )
+            ),
+            RuntimeEnvironment="SQL-1_0",
+            ServiceExecutionRole=GetAtt(role, 'Arn'),
+            DependsOn=stream
+        ))
+
+        template.add_resource(analytics.ApplicationOutput(
+            f'{self._analytics_application_resource_name(context.name)}Output',
+            ApplicationName=self._analytics_application_resource_name(context.name),
+            Output=analytics.Output(
+                DestinationSchema=analytics.DestinationSchema(
+                    RecordFormatType="JSON"
+                ),
+                LambdaOutput=analytics.LambdaOutput(
+                    ResourceARN=GetAtt(lambda_function, 'Arn')
+                )
+            ),
+            DependsOn=analytics_stream
+        ))
 
     def _add_adaptive_memory_functions(self, template, context: ff.Context, timeout, role_title, async_lambda):
         memory_settings = self._configuration.contexts.get('firefly_aws').get('memory_settings')
@@ -804,16 +886,18 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
                                 'Action': [
                                     'athena:*',
                                     'cloudfront:CreateInvalidation',
+                                    'dynamodb:*',
                                     'ec2:*NetworkInterface',
                                     'ec2:DescribeNetworkInterfaces',
                                     'glue:*',
+                                    'kinesis:*',
+                                    'kinesisanalytics:*',
                                     'lambda:InvokeFunction',
                                     'rds-data:*',
                                     's3:*',
                                     'secretsmanager:GetSecretValue',
                                     'sns:*',
                                     'sqs:*',
-                                    'dynamodb:*',
                                 ],
                                 'Resource': '*',
                                 'Effect': 'Allow',
@@ -828,7 +912,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
                     'Action': ['sts:AssumeRole'],
                     'Effect': 'Allow',
                     'Principal': {
-                        'Service': ['lambda.amazonaws.com']
+                        'Service': ['lambda.amazonaws.com', 'kinesisanalytics.amazonaws.com']
                     }
                 }]
             }

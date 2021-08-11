@@ -12,7 +12,7 @@
 #  You should have received a copy of the GNU General Public License along with Firefly. If not, see
 #  <http://www.gnu.org/licenses/>.
 
-from .check_resource_usage import CheckResourceUsage
+from .requeue_message import RequeueMessage
 from .ddb_serializer import DdbDeserializer
 from .execution_context import ExecutionContext
 from .find_outlier_threshold import FindOutlierThreshold
