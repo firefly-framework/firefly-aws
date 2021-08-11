@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Callable
+from typing import Callable, Optional
 
 import firefly as ff
 
@@ -28,7 +28,7 @@ if os.environ.get('ADAPTIVE_MEMORY'):
                         'When using "adaptive" memory you must provide a list of memory_settings'
                     )
 
-        def __call__(self, message: ff.Message, next_: Callable) -> ff.Message:
+        def __call__(self, message: ff.Message, next_: Callable) -> Optional[ff.Message]:
             function_name = self._lambda_function_name(self._context, 'Async')
             if self._execution_context.context and self._execution_context.context.function_name == function_name:
                 if not hasattr(message, '_memory'):
@@ -42,7 +42,7 @@ if os.environ.get('ADAPTIVE_MEMORY'):
 
                 self._enqueue_message(message)
 
-                return message
+                return
 
             else:
                 return next_(message)
