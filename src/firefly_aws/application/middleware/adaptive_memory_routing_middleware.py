@@ -34,6 +34,7 @@ if os.environ.get('ADAPTIVE_MEMORY'):
                 if not hasattr(message, '_memory'):
                     memory = self._get_memory_level(str(message))
                     if memory is None:
+                        self._resource_monitor.set_memory_level(str(message), self._memory_settings[0])
                         setattr(message, '_memory', str(self._memory_settings[0]))
                         self._get_memory_level.cache_clear()
                     else:

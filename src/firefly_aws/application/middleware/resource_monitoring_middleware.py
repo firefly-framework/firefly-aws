@@ -28,8 +28,8 @@ if os.environ.get('ADAPTIVE_MEMORY'):
         _memory_settings: list = None
 
         def __init__(self):
-            context = self._configuration.contexts[self._context]
-            if context.get('memory') == 'adaptive':
+            context = self._configuration.contexts['firefly_aws']
+            if context.get('memory_async') == 'adaptive':
                 self._memory_settings = sorted(list(map(int, context.get('memory_settings'))))
                 if self._memory_settings is None:
                     raise ff.ConfigurationError(
@@ -41,23 +41,27 @@ if os.environ.get('ADAPTIVE_MEMORY'):
 
             try:
                 response = next_(message)
-                memory_limit = self._execution_context.context.memory_limit_in_mb
-                memory_index = self._memory_settings.index(int(memory_limit))
-                memory_percent_used = psutil.Process(os.getpid()).memory_percent() / 100
-                memory_used = memory_percent_used * float(memory_limit)
-                self._kinesis_client.put_record(
-                    StreamName=self._stream_resource_name(self._context),
-                    Data=json.dumps({
-                        'event_type': 'resource-usage',
-                        'message': str(message),
-                        'memory_used': float(memory_used),
-                        'run_time': float(TIME_LIMIT - self._execution_context.context.get_remaining_time_in_millis()),
-                        'max_memory': float(memory_limit),
-                        'prev_memory_tier': float(self._memory_settings[memory_index - 1])
-                        if memory_index > 0 else None,
-                    }).encode('utf-8'),
-                    PartitionKey='resource-monitor'
-                )
+
+                if isinstance(message, ff.Event) or (isinstance(message, ff.Command) and hasattr(message, '_async')):
+                    memory_limit = self._execution_context.context.memory_limit_in_mb
+                    memory_index = self._memory_settings.index(int(memory_limit))
+                    memory_percent_used = psutil.Process(os.getpid()).memory_percent() / 100
+                    memory_used = memory_percent_used * float(memory_limit)
+                    self._kinesis_client.put_record(
+                        StreamName=self._stream_resource_name(self._context),
+                        Data=json.dumps({
+                            'event_type': 'resource-usage',
+                            'message': str(message),
+                            'memory_used': float(memory_used),
+                            'run_time': float(
+                                TIME_LIMIT - self._execution_context.context.get_remaining_time_in_millis()
+                            ),
+                            'max_memory': float(memory_limit),
+                            'prev_memory_tier': float(self._memory_settings[memory_index - 1])
+                            if memory_index > 0 else None,
+                        }).encode('utf-8'),
+                        PartitionKey='resource-monitor'
+                    )
             except (MemoryError, EndpointConnectionError):
                 self._requeue_message(message)
             except AttributeError:

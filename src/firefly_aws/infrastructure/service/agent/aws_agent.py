@@ -466,9 +466,10 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         self.info('Done')
 
     def _add_adaptive_memory_streams(self, template, context: ff.Context, lambda_function, role):
+        stream_name = self._stream_resource_name(context.name)
         stream = template.add_resource(kinesis.Stream(
-            self._stream_resource_name(context.name),
-            Name="METRICS_INPUT_STREAM",
+            stream_name,
+            Name=stream_name,
             ShardCount=1
         ))
 
@@ -489,7 +490,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
                                     SELECT STREAM 
                                         MAX(message), 
                                         CASE WHEN (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory) THEN 1 ELSE 0
-                                    FROM "METRICS_INPUT_STREAM_001"
+                                    FROM "{stream_name}_001"
                                     WHERE (
                                         (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory)
                                         OR (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) < (.8 * COALESCE(prev_memory_tier, 1000000))
@@ -521,7 +522,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
                         KinesisStreamsInput=analytics.KinesisStreamsInput(
                             ResourceARN=GetAtt(stream, 'Arn'),
                         ),
-                        NamePrefix="METRICS_INPUT_STREAM"
+                        NamePrefix=stream_name
                     )]
                 )
             ),
