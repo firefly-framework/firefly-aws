@@ -472,6 +472,15 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             Name=stream_name,
             ShardCount=1
         ))
+        """
+        CASE WHEN (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory) THEN 1 ELSE 0
+        
+        (
+                                        (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory)
+                                        OR (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) < (.8 * COALESCE(prev_memory_tier, 1000000))
+                                    )
+                                        AND 
+        """
 
         analytics_stream = template.add_resource(analytics.Application(
             self._analytics_application_resource_name(context.name),
@@ -489,13 +498,9 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
                                 INSERT INTO "DESTINATION_STREAM"
                                     SELECT STREAM 
                                         MAX(message), 
-                                        CASE WHEN (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory) THEN 1 ELSE 0
+                                        1
                                     FROM "{stream_name}_001"
-                                    WHERE (
-                                        (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory)
-                                        OR (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) < (.8 * COALESCE(prev_memory_tier, 1000000))
-                                    )
-                                        AND event_type = 'resource-usage' 
+                                    WHERE event_type = 'resource-usage' 
                                     WINDOW WIN AS (
                                         RANGE INTERVAL '1' DAY PRECEDING
                                     )
