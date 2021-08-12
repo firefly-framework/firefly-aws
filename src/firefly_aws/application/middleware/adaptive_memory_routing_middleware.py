@@ -12,7 +12,7 @@ from ...domain.service.resource_monitor import ResourceMonitor
 
 if os.environ.get('ADAPTIVE_MEMORY'):
     @ff.register_middleware(index=0, buses=['event', 'command'])
-    class AdaptiveMemoryRoutingMiddleware(ff.Middleware, ResourceNameAware):
+    class AdaptiveMemoryRoutingMiddleware(ff.Middleware, ResourceNameAware, ff.LoggerAware):
         _resource_monitor: ResourceMonitor = None
         _execution_context: ExecutionContext = None
         _message_transport: ff.MessageTransport = None
@@ -40,9 +40,9 @@ if os.environ.get('ADAPTIVE_MEMORY'):
                     else:
                         setattr(message, '_memory', self._get_memory_level(str(message)))
 
-                target = self._lambda_function_name(self._context, type_='Async', memory=getattr(message, '_memory'))
-                self._info(f"Routing message {str(message)} to {target}")
-
+                self._info('Routing message %s to %s', str(message), self._lambda_function_name(
+                    self._context, type_='Async', memory=getattr(message, '_memory')
+                ))
                 self._enqueue_message(message)
 
                 return
