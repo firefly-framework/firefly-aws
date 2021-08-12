@@ -59,7 +59,7 @@ if os.environ.get('ADAPTIVE_MEMORY'):
                             'max_memory': float(memory_limit),
                             'prev_memory_tier': float(self._memory_settings[memory_index - 1])
                             if memory_index > 0 else None,
-                        }),
+                        }).encode('utf-8'),
                         PartitionKey='resource-monitor'
                     )
             except (MemoryError, EndpointConnectionError):
