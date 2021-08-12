@@ -40,9 +40,9 @@ if os.environ.get('ADAPTIVE_MEMORY'):
                     else:
                         setattr(message, '_memory', self._get_memory_level(str(message)))
 
-                self._info('Routing message %s to %s', str(message), self._lambda_function_name(
-                    self._context, type_='Async', memory=getattr(message, '_memory')
-                ))
+                target = self._lambda_function_name(self._context, type_='Async', memory=getattr(message, '_memory'))
+                self._info(f"Routing message {str(message)} to {target}")
+
                 self._enqueue_message(message)
 
                 return
