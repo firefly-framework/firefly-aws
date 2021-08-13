@@ -473,7 +473,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             ShardCount=1
         ))
 
-        # sql_stream_pump = """
+        # sql_text = """
         #                 CREATE OR REPLACE STREAM "DESTINATION_STREAM" (
         #                     "rt" TIMESTAMP,
         #                     "message" CHAR(128),
@@ -492,30 +492,16 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         #                 ;
         #             """
 
-        # sql_stream_pump = """
-        #                 CREATE OR REPLACE STREAM "DESTINATION_STREAM" (
-        #                     "rt" TIMESTAMP,
-        #                     "message" CHAR(128),
-        #                     "up" BIGINT
-        #                 );
+        # """
+        #                             CASE WHEN (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory) THEN 1 ELSE 0
 
-        #                 CREATE OR REPLACE PUMP "STREAM_PUMP" AS
-        #                     INSERT INTO "DESTINATION_STREAM"
-        #                         SELECT STREAM
-        #                             FLOOR("SOURCE_SQL_STREAM_001".ROWTIME TO HOUR),
-        #                             "message",
-        #                             MAX(CASE WHEN (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory) THEN 1 ELSE 0)
-        #                         FROM "SOURCE_SQL_STREAM_001"
-        #                         WHERE "event_type" = 'resource-usage'
         #                             AND (
         #                                 (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory)
         #                                 OR (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) < (.8 * COALESCE(prev_memory_tier, 1000000))
         #                             )
-        #                         GROUP BY FLOOR("SOURCE_SQL_STREAM_001".ROWTIME TO HOUR), "message"
-        #                 ;
-        #             """
+        # """
 
-        sql_stream_pump = """
+        sql_text = """
                         CREATE OR REPLACE STREAM "DESTINATION_STREAM" (
                         "rt" TIMESTAMP,
                         "message" VARCHAR(128),
@@ -563,7 +549,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             ApplicationConfiguration=analytics.ApplicationConfiguration(
                 ApplicationCodeConfiguration=analytics.ApplicationCodeConfiguration(
                     CodeContent=analytics.CodeContent(
-                        TextContent=sql_stream_pump
+                        TextContent=sql_text
                     ),
                     CodeContentType="PLAINTEXT"
                 ),
