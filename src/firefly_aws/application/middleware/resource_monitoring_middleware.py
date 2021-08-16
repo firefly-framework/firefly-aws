@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import resource
 from typing import Callable
 
 import firefly as ff
@@ -35,6 +36,7 @@ if os.environ.get('ADAPTIVE_MEMORY'):
                     raise ff.ConfigurationError(
                         'When using "adaptive" memory you must provide a list of memory_settings'
                     )
+                self._set_soft_memory_limit()
 
         def __call__(self, message: ffd.Message, next_: Callable) -> ffd.Message:
             response = None
@@ -62,9 +64,17 @@ if os.environ.get('ADAPTIVE_MEMORY'):
                         }).encode('utf-8'),
                         PartitionKey='resource-monitor'
                     )
-            except (MemoryError, EndpointConnectionError):
+            except (MemoryError, EndpointConnectionError, SystemExit):
                 self._requeue_message(message)
             except AttributeError:
                 pass
 
             return response
+
+        def _set_soft_memory_limit(self):
+            if not self._execution_context.context:
+                return
+
+            limit = int(self._execution_context.context.memory_limit_in_mb * .9)
+            _, hard = resource.getrlimit(resource.RLIMIT_AS)
+            resource.setrlimit(resource.RLIMIT_AS, (limit, hard))

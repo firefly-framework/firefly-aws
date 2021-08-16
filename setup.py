@@ -16,7 +16,7 @@ setuptools.setup(
         'cognitojwt>=1.2.2',
         'dateparser>=0.7.4',
         'firefly-dependency-injection>=1.0.0',
-        'firefly-framework>=1.1.55',
+        'firefly-framework>=1.1.56',
         'Jinja2>=2.11.1',
         'jinjasql>=0.1.8',
         'multipart>=0.2.3',

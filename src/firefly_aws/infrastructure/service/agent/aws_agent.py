@@ -197,7 +197,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         ))
 
         if self._adaptive_memory:
-            value = '3008' if not self._adaptive_memory else '512'
+            value = '3008' if not self._adaptive_memory else '256'
             try:
                 value = int(self._aws_config.get('memory_async'))
             except ValueError:
@@ -501,45 +501,45 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         #                             )
         # """
 
-        sql_text = """
-                        CREATE OR REPLACE STREAM "DESTINATION_STREAM" (
-                        "rt" TIMESTAMP,
-                        "message" VARCHAR(128),
-                        "up" BIGINT
-                        );
-
-                        CREATE OR REPLACE STREAM "METRICS_STREAM" (
-                        "rt" TIMESTAMP,
-                        "message" VARCHAR(128),
-                        "average" DOUBLE,
-                        "standard_dev" DOUBLE
-                        );
-
-                        CREATE OR REPLACE PUMP "METRICS_PUMP" AS
-                        INSERT INTO "METRICS_STREAM"
-                            SELECT STREAM
-                                FLOOR(s.ROWTIME TO HOUR),
-                                "message",
-                                AVG("memory_used"),
-                                STDDEV_SAMP("memory_used")
-                            FROM "SOURCE_SQL_STREAM_001" AS s
-                            GROUP BY FLOOR(s.ROWTIME TO HOUR), "message";
-
-
-                        CREATE OR REPLACE PUMP "STREAM_PUMP" AS
-                        INSERT INTO "DESTINATION_STREAM"
-                            SELECT STREAM
-                                m."rt",
-                                m."message",
-                                MAX(CASE WHEN (m."average" + (m."standard_dev" * 2.58)) > (.9 * s."max_memory") THEN 1 ELSE 0 END)
-                            FROM "SOURCE_SQL_STREAM_001" AS s
-                            JOIN "METRICS_STREAM" AS m
-                                ON s."message" = m."message" 
-                                AND FLOOR(s.ROWTIME TO HOUR) = m."rt"  
-                            WHERE 
-                                    ((m."average" + (m."standard_dev" * 2.58)) > (.9 * s."max_memory"))
-                                    OR ((m."average" + (m."standard_dev" * 2.58)) < (.8 * s."prev_memory_tier"))
-                            GROUP BY FLOOR(s.ROWTIME TO HOUR), m."rt", m."message", m."average", m."standard_dev", s."max_memory", s."prev_memory_tier";
+        sql = """
+            CREATE OR REPLACE STREAM "DESTINATION_STREAM" (
+                "rt" TIMESTAMP,
+                "message" VARCHAR(128),
+                "up" BIGINT
+            );
+    
+            CREATE OR REPLACE STREAM "METRICS_STREAM" (
+                "rt" TIMESTAMP,
+                "message" VARCHAR(128),
+                "average" DOUBLE,
+                "standard_dev" DOUBLE
+            );
+    
+            CREATE OR REPLACE PUMP "METRICS_PUMP" AS
+            INSERT INTO "METRICS_STREAM"
+                SELECT STREAM
+                    FLOOR(s.ROWTIME TO HOUR),
+                    "message",
+                    AVG("memory_used"),
+                    STDDEV_SAMP("memory_used")
+                FROM "PwrLabDevIntegrationStream_001" AS s
+                GROUP BY FLOOR(s.ROWTIME TO HOUR), "message";
+    
+    
+            CREATE OR REPLACE PUMP "STREAM_PUMP" AS
+            INSERT INTO "DESTINATION_STREAM"
+                SELECT STREAM
+                    m."rt",
+                    m."message",
+                    MAX(CASE WHEN (m."average" + (m."standard_dev" * 2.58)) > (.9 * s."max_memory") THEN 1 ELSE 0 END)
+                FROM "PwrLabDevIntegrationStream_001" AS s
+                JOIN "METRICS_STREAM" AS m
+                    ON s."message" = m."message" 
+                    AND FLOOR(s.ROWTIME TO HOUR) = m."rt"  
+                WHERE 
+                        ((m."average" + (m."standard_dev" * 2.58)) > (.9 * s."max_memory"))
+                        OR ((m."average" + (m."standard_dev" * 2.58)) < (.8 * s."prev_memory_tier"))
+                GROUP BY FLOOR(s.ROWTIME TO HOUR), m."rt", m."message", m."average", m."standard_dev", s."max_memory", s."prev_memory_tier";
                             
         """
 
@@ -549,7 +549,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             ApplicationConfiguration=analytics.ApplicationConfiguration(
                 ApplicationCodeConfiguration=analytics.ApplicationCodeConfiguration(
                     CodeContent=analytics.CodeContent(
-                        TextContent=sql_text
+                        TextContent=sql
                     ),
                     CodeContentType="PLAINTEXT"
                 ),
