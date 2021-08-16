@@ -472,14 +472,75 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             Name=stream_name,
             ShardCount=1
         ))
-        """
-        CASE WHEN (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory) THEN 1 ELSE 0
-        
-        (
-                                        (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory)
-                                        OR (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) < (.8 * COALESCE(prev_memory_tier, 1000000))
-                                    )
-                                        AND 
+
+        # sql_text = """
+        #                 CREATE OR REPLACE STREAM "DESTINATION_STREAM" (
+        #                     "rt" TIMESTAMP,
+        #                     "message" CHAR(128),
+        #                     "up" BIGINT
+        #                 );
+                        
+        #                 CREATE OR REPLACE PUMP "STREAM_PUMP" AS
+        #                     INSERT INTO "DESTINATION_STREAM"
+        #                         SELECT STREAM
+        #                             FLOOR("SOURCE_SQL_STREAM_001".ROWTIME TO HOUR),
+        #                             "message",
+        #                             MAX(1)
+        #                         FROM "SOURCE_SQL_STREAM_001"
+        #                         WHERE "event_type" = 'resource-usage'
+        #                         GROUP BY FLOOR("SOURCE_SQL_STREAM_001".ROWTIME TO HOUR), "message"
+        #                 ;
+        #             """
+
+        # """
+        #                             CASE WHEN (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory) THEN 1 ELSE 0
+
+        #                             AND (
+        #                                 (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory)
+        #                                 OR (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) < (.8 * COALESCE(prev_memory_tier, 1000000))
+        #                             )
+        # """
+
+        sql_text = """
+                        CREATE OR REPLACE STREAM "DESTINATION_STREAM" (
+                        "rt" TIMESTAMP,
+                        "message" VARCHAR(128),
+                        "up" BIGINT
+                        );
+
+                        CREATE OR REPLACE STREAM "METRICS_STREAM" (
+                        "rt" TIMESTAMP,
+                        "message" VARCHAR(128),
+                        "average" DOUBLE,
+                        "standard_dev" DOUBLE
+                        );
+
+                        CREATE OR REPLACE PUMP "METRICS_PUMP" AS
+                        INSERT INTO "METRICS_STREAM"
+                            SELECT STREAM
+                                FLOOR(s.ROWTIME TO HOUR),
+                                "message",
+                                AVG("memory_used"),
+                                STDDEV_SAMP("memory_used")
+                            FROM "SOURCE_SQL_STREAM_001" AS s
+                            GROUP BY FLOOR(s.ROWTIME TO HOUR), "message";
+
+
+                        CREATE OR REPLACE PUMP "STREAM_PUMP" AS
+                        INSERT INTO "DESTINATION_STREAM"
+                            SELECT STREAM
+                                m."rt",
+                                m."message",
+                                MAX(CASE WHEN (m."average" + (m."standard_dev" * 2.58)) > (.9 * s."max_memory") THEN 1 ELSE 0 END)
+                            FROM "SOURCE_SQL_STREAM_001" AS s
+                            JOIN "METRICS_STREAM" AS m
+                                ON s."message" = m."message" 
+                                AND FLOOR(s.ROWTIME TO HOUR) = m."rt"  
+                            WHERE 
+                                    ((m."average" + (m."standard_dev" * 2.58)) > (.9 * s."max_memory"))
+                                    OR ((m."average" + (m."standard_dev" * 2.58)) < (.8 * s."prev_memory_tier"))
+                            GROUP BY FLOOR(s.ROWTIME TO HOUR), m."rt", m."message", m."average", m."standard_dev", s."max_memory", s."prev_memory_tier";
+                            
         """
 
         analytics_stream = template.add_resource(analytics.Application(
@@ -488,24 +549,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             ApplicationConfiguration=analytics.ApplicationConfiguration(
                 ApplicationCodeConfiguration=analytics.ApplicationCodeConfiguration(
                     CodeContent=analytics.CodeContent(
-                        TextContent=f"""
-                            CREATE OR REPLACE STREAM "DESTINATION_STREAM" (
-                                message CHAR(128),
-                                up BIGINT
-                            );
-                            
-                            CREATE OR REPLACE PUMP "STREAM_PUMP" AS
-                                INSERT INTO "DESTINATION_STREAM"
-                                    SELECT STREAM 
-                                        MAX(message), 
-                                        1
-                                    FROM "{stream_name}_001"
-                                    WHERE event_type = 'resource-usage' 
-                                    WINDOW WIN AS (
-                                        RANGE INTERVAL '1' DAY PRECEDING
-                                    )
-                            ;
-                        """
+                        TextContent=sql_text
                     ),
                     CodeContentType="PLAINTEXT"
                 ),
