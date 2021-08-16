@@ -27,10 +27,14 @@ if os.environ.get('ADAPTIVE_MEMORY'):
                     raise ff.ConfigurationError(
                         'When using "adaptive" memory you must provide a list of memory_settings'
                     )
+                self._memory_mappings = self._configuration.contexts[self._context].get('memory_settings', {})
 
         def __call__(self, message: ff.Message, next_: Callable) -> Optional[ff.Message]:
             function_name = self._lambda_function_name(self._context, 'Async')
             if self._execution_context.context and self._execution_context.context.function_name == function_name:
+                if str(message) in self._memory_mappings:
+                    setattr(message, '_memory', self._memory_mappings[str(message)])
+
                 if not hasattr(message, '_memory'):
                     memory = self._get_memory_level(str(message))
                     if memory is None:

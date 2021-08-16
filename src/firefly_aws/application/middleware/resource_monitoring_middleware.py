@@ -17,7 +17,7 @@ TIME_LIMIT = 900_000
 
 if os.environ.get('ADAPTIVE_MEMORY'):
     @ff.register_middleware(index=1, buses=['event', 'command'])
-    class ResourceMonitoringMiddleware(ff.Middleware, domain.ResourceNameAware):
+    class ResourceMonitoringMiddleware(ff.Middleware, domain.ResourceNameAware, ff.LoggerAware):
         _resource_monitor: domain.ResourceMonitor = None
         _execution_context: domain.ExecutionContext = None
         _message_factory: ff.MessageFactory = None
@@ -36,7 +36,7 @@ if os.environ.get('ADAPTIVE_MEMORY'):
                     raise ff.ConfigurationError(
                         'When using "adaptive" memory you must provide a list of memory_settings'
                     )
-                self._set_soft_memory_limit()
+                # self._set_soft_memory_limit()
 
         def __call__(self, message: ffd.Message, next_: Callable) -> ffd.Message:
             response = None
@@ -75,6 +75,7 @@ if os.environ.get('ADAPTIVE_MEMORY'):
             if not self._execution_context.context:
                 return
 
-            limit = int(self._execution_context.context.memory_limit_in_mb * .9)
+            limit = int(self._execution_context.context.memory_limit_in_mb * 1048576 * .9)
+            self.info(f'Setting soft memory limit to {limit} bytes')
             _, hard = resource.getrlimit(resource.RLIMIT_AS)
             resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
