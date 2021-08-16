@@ -34,6 +34,8 @@ if os.environ.get('ADAPTIVE_MEMORY'):
             if self._execution_context.context and self._execution_context.context.function_name == function_name:
                 if str(message) in self._memory_mappings:
                     setattr(message, '_memory', self._memory_mappings[str(message)])
+                elif 'default' in self._memory_mappings:
+                    setattr(message, '_memory', self._memory_mappings['default'])
 
                 if not hasattr(message, '_memory'):
                     memory = self._get_memory_level(str(message))
