@@ -336,8 +336,7 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                 # If we're using adaptive memory and this is the router, we don't want to load the entire message.
                 if context.get('memory_async') != 'adaptive' or \
                         not self._execution_context.context or \
-                        self._execution_context.context.function_name != function_name or \
-                        '_name' not in message:
+                        self._execution_context.context.function_name != function_name:
                     try:
                         self.info('Payload key: %s', message['PAYLOAD_KEY'])
                         message = self._load_payload(message['PAYLOAD_KEY'])
@@ -346,7 +345,10 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                         self.error(e)
                         continue
                 else:
-                    message = self._serializer.deserialize(self._serializer.serialize(message))
+                    message = getattr(self._message_factory, message['_type'])(
+                        f"{message['_context']}.{message['_name']}", message
+                    )
+
             if message is None:
                 self.info('Got a null message')
                 return
