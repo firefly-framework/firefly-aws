@@ -351,7 +351,11 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
             if 'kinesis' in record:
                 message = self._message_factory.command('firefly_aws.UpdateResourceSettings', message)
 
-            message.headers['external'] = True
+            try:
+                message.headers['external'] = True
+            except AttributeError:
+                pass
+
             if isinstance(message, ff.Command):
                 self.invoke(message)
             else:
