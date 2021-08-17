@@ -23,6 +23,7 @@ import math
 import os
 import re
 import signal
+import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Union
@@ -137,10 +138,10 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                 return self._serializer.deserialize(
                     self._store_large_payloads_in_s3(
                         self._serializer.serialize(self.invoke(message)),
-                        name=getattr(message, '_name'),
-                        type_=getattr(message, '_type'),
-                        context=getattr(message, '_context'),
-                        id_=getattr(message, '_id')
+                        name=message.__class__.__name__,
+                        type_='command',
+                        context=message.get_context(),
+                        id_=getattr(message, '_id', str(uuid.uuid4()))
                     )
                 )
             except ff.ConfigurationError:
@@ -151,10 +152,10 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
             return self._serializer.deserialize(
                 self._store_large_payloads_in_s3(
                     self._serializer.serialize(self.request(message)),
-                    name=getattr(message, '_name'),
-                    type_=getattr(message, '_type'),
-                    context=getattr(message, '_context'),
-                    id_=getattr(message, '_id')
+                    name=message.__class__.__name__,
+                    type_='query',
+                    context=message.get_context(),
+                    id_=getattr(message, '_id', str(uuid.uuid4()))
                 )
             )
 

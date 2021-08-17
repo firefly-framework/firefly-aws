@@ -43,10 +43,10 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
                     TopicArn=self._topic_arn(event.get_context()),
                     Message=self._store_large_payloads_in_s3(
                         self._serializer.serialize(event),
-                        name=getattr(event, '_name'),
-                        type_=getattr(event, '_type'),
-                        context=getattr(event, '_context'),
-                        id_=getattr(event, '_id')
+                        name=event.__class__.__name__,
+                        type_='command' if isinstance(event, ff.Command) else 'event',
+                        context=event.get_context(),
+                        id_=getattr(event, '_id', str(uuid.uuid4()))
                     ),
                     MessageAttributes={
                         '_name': {
@@ -104,8 +104,8 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
         )
         queue.send_message(MessageBody=self._store_large_payloads_in_s3(
             self._serializer.serialize(message),
-            name=getattr(message, '_name'),
-            type_=getattr(message, '_type'),
-            context=getattr(message, '_context'),
-            id_=getattr(message, '_id')
+            name=message.__class__.__name__,
+            type_='command' if isinstance(message, ff.Command) else 'event',
+            context=message.get_context(),
+            id_=getattr(message, '_id', str(uuid.uuid4()))
         ))
