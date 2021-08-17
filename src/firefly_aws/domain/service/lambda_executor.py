@@ -73,7 +73,7 @@ def time_limit(seconds):
         signal.alarm(0)
 
 
-class LambdaExecutor(ff.DomainService):
+class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
     _serializer: ff.Serializer = None
     _message_factory: ff.MessageFactory = None
     _rest_router: ff.RestRouter = None
@@ -85,6 +85,7 @@ class LambdaExecutor(ff.DomainService):
     _store_large_payloads_in_s3: domain.StoreLargePayloadsInS3 = None
     _load_payload: domain.LoadPayload = None
     _execution_context: domain.ExecutionContext = None
+    _configuration: ff.Configuration = None
     _context: str = None
 
     def __init__(self):
@@ -135,7 +136,11 @@ class LambdaExecutor(ff.DomainService):
             try:
                 return self._serializer.deserialize(
                     self._store_large_payloads_in_s3(
-                        self._serializer.serialize(self.invoke(message))
+                        self._serializer.serialize(self.invoke(message)),
+                        name=getattr(message, '_name'),
+                        type_=getattr(message, '_type'),
+                        context=getattr(message, '_context'),
+                        id_=getattr(message, '_id')
                     )
                 )
             except ff.ConfigurationError:
@@ -145,7 +150,11 @@ class LambdaExecutor(ff.DomainService):
         elif isinstance(message, ff.Query):
             return self._serializer.deserialize(
                 self._store_large_payloads_in_s3(
-                    self._serializer.serialize(self.request(message))
+                    self._serializer.serialize(self.request(message)),
+                    name=getattr(message, '_name'),
+                    type_=getattr(message, '_type'),
+                    context=getattr(message, '_context'),
+                    id_=getattr(message, '_id')
                 )
             )
 
@@ -321,13 +330,19 @@ class LambdaExecutor(ff.DomainService):
                 message = body
 
             if isinstance(message, dict) and 'PAYLOAD_KEY' in message:
-                try:
-                    self.info('Payload key: %s', message['PAYLOAD_KEY'])
-                    message = self._load_payload(message['PAYLOAD_KEY'])
-                except Exception as e:
-                    self.nack_message(record)
-                    self.error(e)
-                    continue
+                context = self._configuration.contexts['firefly_aws']
+                function_name = self._lambda_function_name(self._context, 'Async')
+                # If we're using adaptive memory and this is the router, we don't want to load the entire message.
+                if context.get('memory_async') != 'adaptive' or \
+                        not self._execution_context.context or \
+                        self._execution_context.context.function_name != function_name:
+                    try:
+                        self.info('Payload key: %s', message['PAYLOAD_KEY'])
+                        message = self._load_payload(message['PAYLOAD_KEY'])
+                    except Exception as e:
+                        self.nack_message(record)
+                        self.error(e)
+                        continue
             if message is None:
                 self.info('Got a null message')
                 return

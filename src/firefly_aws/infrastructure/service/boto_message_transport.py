@@ -41,7 +41,13 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
             else:
                 self._sns_client.publish(
                     TopicArn=self._topic_arn(event.get_context()),
-                    Message=self._store_large_payloads_in_s3(self._serializer.serialize(event)),
+                    Message=self._store_large_payloads_in_s3(
+                        self._serializer.serialize(event),
+                        name=getattr(event, '_name'),
+                        type_=getattr(event, '_type'),
+                        context=getattr(event, '_context'),
+                        id_=getattr(event, '_id')
+                    ),
                     MessageAttributes={
                         '_name': {
                             'DataType': 'String',
@@ -96,4 +102,10 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
         queue = self._sqs_resource.get_queue_by_name(
             QueueName=self._queue_name(context or message.get_context(), memory=memory)
         )
-        queue.send_message(MessageBody=self._store_large_payloads_in_s3(self._serializer.serialize(message)))
+        queue.send_message(MessageBody=self._store_large_payloads_in_s3(
+            self._serializer.serialize(message),
+            name=getattr(message, '_name'),
+            type_=getattr(message, '_type'),
+            context=getattr(message, '_context'),
+            id_=getattr(message, '_id')
+        ))
