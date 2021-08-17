@@ -344,6 +344,8 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                         self.nack_message(record)
                         self.error(e)
                         continue
+                else:
+                    message = self._serializer.deserialize(self._serializer.serialize(message))
             if message is None:
                 self.info('Got a null message')
                 return
@@ -354,7 +356,7 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
             try:
                 message.headers['external'] = True
             except AttributeError:
-                pass
+                self.info('message is not of type Message')
 
             if isinstance(message, ff.Command):
                 self.invoke(message)
