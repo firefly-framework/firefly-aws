@@ -330,24 +330,33 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
             except TypeError:
                 message = body
 
+            print("Start")
+            print(message)
             if isinstance(message, dict) and 'PAYLOAD_KEY' in message:
+                print("PAYLOAD_KEY is in the message")
                 context = self._configuration.contexts['firefly_aws']
                 function_name = self._lambda_function_name(self._context, 'Async')
+                print(f"memory_async: {context.get('memory_async')}")
+                print(f"Executing function: {self._execution_context.context.function_name}")
+                print(f"function: {function_name}")
                 # If we're using adaptive memory and this is the router, we don't want to load the entire message.
                 if context.get('memory_async') != 'adaptive' or \
                         not self._execution_context.context or \
                         self._execution_context.context.function_name != function_name:
                     try:
+                        print("Loading message from s3")
                         self.info('Payload key: %s', message['PAYLOAD_KEY'])
                         message = self._load_payload(message['PAYLOAD_KEY'])
+                        print("Message Loaded")
                     except Exception as e:
+                        print("Error loading message")
                         self.nack_message(record)
                         self.error(e)
                         continue
                 else:
-                    message = getattr(self._message_factory, message['_type'])(
-                        f"{message['_context']}.{message['_name']}", message
-                    )
+                    print("Not loading message from s3")
+                    message = self._serializer.deserialize(self._serializer.serialize(message))
+            print("Done")
 
             if message is None:
                 self.info('Got a null message')
