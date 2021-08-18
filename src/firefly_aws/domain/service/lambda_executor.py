@@ -330,39 +330,24 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
             except TypeError:
                 message = body
 
-            print("Start")
-            print(message)
-            if isinstance(message, ff.Event):
-                print(message.to_dict())
             if (isinstance(message, dict) and 'PAYLOAD_KEY' in message) or \
                     (isinstance(message, ff.Message) and hasattr(message, 'PAYLOAD_KEY')):
-                print("PAYLOAD_KEY is in the message")
                 context = self._configuration.contexts['firefly_aws']
                 function_name = self._lambda_function_name(self._context, 'Async')
-                print(f"memory_async: {context.get('memory_async')}")
-                print(f"Executing function: {self._execution_context.context.function_name}")
-                print(f"function: {function_name}")
                 # If we're using adaptive memory and this is the router, we don't want to load the entire message.
                 if context.get('memory_async') != 'adaptive' or \
                         not self._execution_context.context or \
                         self._execution_context.context.function_name != function_name:
                     try:
                         payload_key = message['PAYLOAD_KEY'] if isinstance(message, dict) else message.PAYLOAD_KEY
-                        print("Loading message from s3")
                         self.info('Payload key: %s', payload_key)
                         message = self._load_payload(payload_key)
-                        print("Message Loaded")
                     except Exception as e:
-                        print("Error loading message")
                         self.nack_message(record)
                         self.error(e)
                         continue
                 else:
-                    print("Not loading message from s3")
-                    print(f"Dict: {str(message)}")
                     message = self._serializer.deserialize(self._serializer.serialize(message))
-                    print(message)
-            print("Done")
 
             if message is None:
                 self.info('Got a null message')
