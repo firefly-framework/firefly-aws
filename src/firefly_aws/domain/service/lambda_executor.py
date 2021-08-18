@@ -355,7 +355,9 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                         continue
                 else:
                     print("Not loading message from s3")
+                    print(f"Dict: {str(message)}")
                     message = self._serializer.deserialize(self._serializer.serialize(message))
+                    print(message)
             print("Done")
 
             if message is None:
