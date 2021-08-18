@@ -334,7 +334,8 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
             print(message)
             if isinstance(message, ff.Event):
                 print(message.to_dict())
-            if isinstance(message, dict) and 'PAYLOAD_KEY' in message:
+            if (isinstance(message, dict) and 'PAYLOAD_KEY' in message) or \
+                    (isinstance(message, ff.Message) and hasattr(message, 'PAYLOAD_KEY')):
                 print("PAYLOAD_KEY is in the message")
                 context = self._configuration.contexts['firefly_aws']
                 function_name = self._lambda_function_name(self._context, 'Async')
