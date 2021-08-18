@@ -345,12 +345,12 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                 # If we're using adaptive memory and this is the router, we don't want to load the entire message.
                 if context.get('memory_async') != 'adaptive' or \
                         not self._execution_context.context or \
-                        self._execution_context.context.function_name != function_name or \
-                        '_name' not in message:
+                        self._execution_context.context.function_name != function_name:
                     try:
+                        payload_key = message['PAYLOAD_KEY'] if isinstance(message, dict) else message.PAYLOAD_KEY
                         print("Loading message from s3")
-                        self.info('Payload key: %s', message['PAYLOAD_KEY'])
-                        message = self._load_payload(message['PAYLOAD_KEY'])
+                        self.info('Payload key: %s', payload_key)
+                        message = self._load_payload(payload_key)
                         print("Message Loaded")
                     except Exception as e:
                         print("Error loading message")
