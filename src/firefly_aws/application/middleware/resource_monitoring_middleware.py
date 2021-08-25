@@ -16,7 +16,7 @@ TIME_LIMIT = 900_000
 
 
 if os.environ.get('ADAPTIVE_MEMORY'):
-    @ff.register_middleware(index=1, buses=['event', 'command'])
+    # @ff.register_middleware(index=1, buses=['event', 'command'])
     class ResourceMonitoringMiddleware(ff.Middleware, domain.ResourceNameAware, ff.LoggerAware):
         _resource_monitor: domain.ResourceMonitor = None
         _execution_context: domain.ExecutionContext = None

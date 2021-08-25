@@ -245,7 +245,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
 
         if self._adaptive_memory:
             self._add_adaptive_memory_functions(template, context, timeout_async, role_title, async_lambda)
-            self._add_adaptive_memory_streams(template, context, async_lambda, role)
+            # self._add_adaptive_memory_streams(template, context, async_lambda, role)
 
         # Timers
         for cls, _ in context.command_handlers.items():
