@@ -23,7 +23,9 @@ import math
 import os
 import re
 import signal
+import uuid
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Union
 
 import firefly as ff
@@ -72,7 +74,7 @@ def time_limit(seconds):
         signal.alarm(0)
 
 
-class LambdaExecutor(ff.DomainService):
+class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
     _serializer: ff.Serializer = None
     _message_factory: ff.MessageFactory = None
     _rest_router: ff.RestRouter = None
@@ -83,6 +85,9 @@ class LambdaExecutor(ff.DomainService):
     _handle_error: domain.HandleError = None
     _store_large_payloads_in_s3: domain.StoreLargePayloadsInS3 = None
     _load_payload: domain.LoadPayload = None
+    _execution_context: domain.ExecutionContext = None
+    _configuration: ff.Configuration = None
+    _context: str = None
 
     def __init__(self):
         self._version_matcher = re.compile(r'^/v(\d)')
@@ -106,13 +111,16 @@ class LambdaExecutor(ff.DomainService):
 
         self._kernel.reset()
 
+        self._execution_context.event = event
+        self._execution_context.context = context
+
         if 'requestContext' in event and 'http' in event['requestContext']:
             self.info('HTTP request')
             return self._handle_http_event(event)
 
-        if 'Records' in event and 'aws:sqs' == event['Records'][0].get('eventSource'):
-            self.info('SQS message')
-            return self._handle_sqs_event(event)
+        if 'Records' in event and event['Records'][0].get('eventSource') in ('aws:sqs', 'aws:kinesis'):
+            self.info('Async message')
+            return self._handle_async_event(event)
 
         message = False
         aws_message = False
@@ -129,7 +137,11 @@ class LambdaExecutor(ff.DomainService):
             try:
                 return self._serializer.deserialize(
                     self._store_large_payloads_in_s3(
-                        self._serializer.serialize(self.invoke(message))
+                        self._serializer.serialize(self.invoke(message)),
+                        name=message.__class__.__name__,
+                        type_='command',
+                        context=message.get_context(),
+                        id_=getattr(message, '_id', str(uuid.uuid4()))
                     )
                 )
             except ff.ConfigurationError:
@@ -139,7 +151,11 @@ class LambdaExecutor(ff.DomainService):
         elif isinstance(message, ff.Query):
             return self._serializer.deserialize(
                 self._store_large_payloads_in_s3(
-                    self._serializer.serialize(self.request(message))
+                    self._serializer.serialize(self.request(message)),
+                    name=message.__class__.__name__,
+                    type_='query',
+                    context=message.get_context(),
+                    id_=getattr(message, '_id', str(uuid.uuid4()))
                 )
             )
 
@@ -300,9 +316,13 @@ class LambdaExecutor(ff.DomainService):
         self.info(f'Proxy Response: %s', ret)
         return ret
 
-    def _handle_sqs_event(self, event: dict):
+    def _handle_async_event(self, event: dict):
         for record in event['Records']:
-            body = self._serializer.deserialize(record['body'])
+            if 'kinesis' in record:
+                body = self._serializer.deserialize(record['kinesis']['data'])
+            else:
+                body = self._serializer.deserialize(record['body'])
+
             try:
                 message: Union[ff.Event, dict] = self._serializer.deserialize(body['Message'])
             except KeyError:
@@ -310,19 +330,37 @@ class LambdaExecutor(ff.DomainService):
             except TypeError:
                 message = body
 
-            if isinstance(message, dict) and 'PAYLOAD_KEY' in message:
-                try:
-                    self.info('Payload key: %s', message['PAYLOAD_KEY'])
-                    message = self._load_payload(message['PAYLOAD_KEY'])
-                except Exception as e:
-                    self.nack_message(record)
-                    self.error(e)
-                    continue
+            if (isinstance(message, dict) and 'PAYLOAD_KEY' in message) or \
+                    (isinstance(message, ff.Message) and hasattr(message, 'PAYLOAD_KEY')):
+                context = self._configuration.contexts['firefly_aws']
+                function_name = self._lambda_function_name(self._context, 'Async')
+                # If we're using adaptive memory and this is the router, we don't want to load the entire message.
+                if context.get('memory_async') != 'adaptive' or \
+                        not self._execution_context.context or \
+                        self._execution_context.context.function_name != function_name:
+                    try:
+                        payload_key = message['PAYLOAD_KEY'] if isinstance(message, dict) else message.PAYLOAD_KEY
+                        self.info('Payload key: %s', payload_key)
+                        message = self._load_payload(payload_key)
+                    except Exception as e:
+                        self.nack_message(record)
+                        self.error(e)
+                        continue
+                else:
+                    message = self._serializer.deserialize(self._serializer.serialize(message))
+
             if message is None:
                 self.info('Got a null message')
                 return
 
-            message.headers['external'] = True
+            if 'kinesis' in record:
+                message = self._message_factory.command('firefly_aws.UpdateResourceSettings', message)
+
+            try:
+                message.headers['external'] = True
+            except AttributeError:
+                self.info('message is not of type Message')
+
             if isinstance(message, ff.Command):
                 self.invoke(message)
             else:

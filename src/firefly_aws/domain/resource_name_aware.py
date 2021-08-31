@@ -15,11 +15,24 @@ class ResourceNameAware(ABC):
         slug = f'{self._project}_{self._ff_environment}_{context}'.rstrip('_')
         return f'{inflection.camelize(inflection.underscore(slug))}'
 
-    def _lambda_resource_name(self, name: str):
-        return f'{self._service_name(name)}Function'
+    def _stream_resource_name(self, context: str):
+        return f'{self._service_name(context)}Stream'
 
-    def _queue_name(self, context: str):
-        return f'{self._service_name(context)}Queue'
+    def _analytics_application_resource_name(self, context: str):
+        return f'{self._service_name(context)}AnalyticsStream'
+
+    def _lambda_resource_name(self, name: str, memory: int = None, type_: str = None):
+        memory = str(memory or '')
+        type_ = str(type_ or '')
+        return f'{self._service_name(name)}{memory}Function{type_}'
+
+    def _lambda_function_name(self, context: str, type_: str, memory: int = None):
+        memory = str(memory or '')
+        return f'{self._service_name(context)}{memory}{type_.capitalize()}'
+
+    def _queue_name(self, context: str, memory: int = None):
+        memory = str(memory or '')
+        return f'{self._service_name(context)}{memory}Queue'
 
     def _ddb_resource_name(self, name: str):
         return f'{self._service_name(name)}DdbTable'

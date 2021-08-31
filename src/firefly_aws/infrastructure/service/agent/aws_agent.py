@@ -41,6 +41,7 @@ from __future__ import annotations
 import os
 import shutil
 from datetime import datetime
+from pprint import pprint
 from time import sleep
 
 import firefly as ff
@@ -58,6 +59,8 @@ from troposphere.iam import Role, Policy
 from troposphere.s3 import Bucket, LifecycleRule, LifecycleConfiguration
 from troposphere.sns import Topic, SubscriptionResource
 from troposphere.sqs import Queue, QueuePolicy, RedrivePolicy
+import troposphere.kinesis as kinesis
+import troposphere.kinesisanalyticsv2 as analytics
 
 from firefly_aws import S3Service, ResourceNameAware
 
@@ -71,6 +74,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
     _s3_service: S3Service = None
     _sns_client = None
     _cloudformation_client = None
+    _adaptive_memory: str = None
 
     def __init__(self, account_id: str):
         self._account_id = account_id
@@ -81,6 +85,11 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             self._bucket = self._configuration.contexts.get('firefly_aws').get('bucket')
         except AttributeError:
             raise ff.FrameworkError('No deployment bucket configured in firefly_aws')
+
+        memory_settings = self._configuration.contexts.get('firefly_aws').get('memory_settings')
+        if memory_settings is not None:
+            self._adaptive_memory = '1'
+            os.environ['ADAPTIVE_MEMORY'] = '1'
 
         self._deployment = deployment
         self._project = self._configuration.all.get('project')
@@ -112,7 +121,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         memory_size = template.add_parameter(Parameter(
             f'{self._lambda_resource_name(service.name)}MemorySize',
             Type=NUMBER,
-            Default=self._aws_config.get('memory', '3008')
+            Default=self._aws_config.get('memory_sync', '3008')
         ))
 
         timeout_gateway = template.add_parameter(Parameter(
@@ -128,7 +137,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         ))
 
         role_title = f'{self._lambda_resource_name(service.name)}ExecutionRole'
-        self._add_role(role_title, template)
+        role = self._add_role(role_title, template)
 
         params = {
             'FunctionName': f'{self._service_name(service.name)}Sync',
@@ -187,8 +196,20 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             DependsOn=api_lambda
         ))
 
+        if self._adaptive_memory:
+            value = '3008' if not self._adaptive_memory else '256'
+            try:
+                value = int(self._aws_config.get('memory_async'))
+            except ValueError:
+                pass
+            memory_size = template.add_parameter(Parameter(
+                f'{self._lambda_resource_name(service.name)}MemorySizeAsync',
+                Type=NUMBER,
+                Default=value
+            ))
+
         params = {
-            'FunctionName': f'{self._service_name(service.name)}Async',
+            'FunctionName': self._lambda_function_name(service.name, 'Async'),
             'Role': GetAtt(role_title, 'Arn'),
             'MemorySize': Ref(memory_size),
             'Timeout': Ref(timeout_async),
@@ -218,9 +239,13 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
                 SubnetIds=self._subnet_ids
             )
         async_lambda = template.add_resource(Function(
-            f'{self._lambda_resource_name(service.name)}Async',
+            self._lambda_resource_name(service.name, type_='Async'),
             **params
         ))
+
+        if self._adaptive_memory:
+            self._add_adaptive_memory_functions(template, context, timeout_async, role_title, async_lambda)
+            # self._add_adaptive_memory_streams(template, context, async_lambda, role)
 
         # Timers
         for cls, _ in context.command_handlers.items():
@@ -235,8 +260,8 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
 
                 target = Target(
                     f'{self._service_name(service.name)}AsyncTarget',
-                    Arn=GetAtt(f'{self._lambda_resource_name(service.name)}Async', 'Arn'),
-                    Id=f'{self._lambda_resource_name(service.name)}Async',
+                    Arn=GetAtt(self._lambda_resource_name(service.name, type_='Async'), 'Arn'),
+                    Id=self._lambda_resource_name(service.name, type_='Async'),
                     Input=f'{{"_context": "{context.name}", "_type": "command", "_name": "{cls.__name__}"}}'
                 )
                 rule = template.add_resource(Rule(
@@ -340,7 +365,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             BatchSize=1,
             Enabled=True,
             EventSourceArn=GetAtt(queue, 'Arn'),
-            FunctionName=f'{self._service_name(service.name)}Async',
+            FunctionName=self._lambda_function_name(service.name, 'Async'),
             DependsOn=[queue, async_lambda]
         ))
         topic = template.add_resource(Topic(
@@ -439,6 +464,204 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         self._migrate_schema(context)
 
         self.info('Done')
+
+    def _add_adaptive_memory_streams(self, template, context: ff.Context, lambda_function, role):
+        stream_name = self._stream_resource_name(context.name)
+        stream = template.add_resource(kinesis.Stream(
+            stream_name,
+            Name=stream_name,
+            ShardCount=1
+        ))
+
+        # sql_text = """
+        #                 CREATE OR REPLACE STREAM "DESTINATION_STREAM" (
+        #                     "rt" TIMESTAMP,
+        #                     "message" CHAR(128),
+        #                     "up" BIGINT
+        #                 );
+                        
+        #                 CREATE OR REPLACE PUMP "STREAM_PUMP" AS
+        #                     INSERT INTO "DESTINATION_STREAM"
+        #                         SELECT STREAM
+        #                             FLOOR("SOURCE_SQL_STREAM_001".ROWTIME TO HOUR),
+        #                             "message",
+        #                             MAX(1)
+        #                         FROM "SOURCE_SQL_STREAM_001"
+        #                         WHERE "event_type" = 'resource-usage'
+        #                         GROUP BY FLOOR("SOURCE_SQL_STREAM_001".ROWTIME TO HOUR), "message"
+        #                 ;
+        #             """
+
+        # """
+        #                             CASE WHEN (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory) THEN 1 ELSE 0
+
+        #                             AND (
+        #                                 (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) > (.9 * max_memory)
+        #                                 OR (AVG(memory_usage) + (STDDEV_SAMP(memory_usage) * 2.58)) < (.8 * COALESCE(prev_memory_tier, 1000000))
+        #                             )
+        # """
+
+        sql = """
+            CREATE OR REPLACE STREAM "DESTINATION_STREAM" (
+                "rt" TIMESTAMP,
+                "message" VARCHAR(128),
+                "up" BIGINT
+            );
+    
+            CREATE OR REPLACE STREAM "METRICS_STREAM" (
+                "rt" TIMESTAMP,
+                "message" VARCHAR(128),
+                "average" DOUBLE,
+                "standard_dev" DOUBLE
+            );
+    
+            CREATE OR REPLACE PUMP "METRICS_PUMP" AS
+            INSERT INTO "METRICS_STREAM"
+                SELECT STREAM
+                    FLOOR(s.ROWTIME TO HOUR),
+                    "message",
+                    AVG("memory_used"),
+                    STDDEV_SAMP("memory_used")
+                FROM "PwrLabDevIntegrationStream_001" AS s
+                GROUP BY FLOOR(s.ROWTIME TO HOUR), "message";
+    
+    
+            CREATE OR REPLACE PUMP "STREAM_PUMP" AS
+            INSERT INTO "DESTINATION_STREAM"
+                SELECT STREAM
+                    m."rt",
+                    m."message",
+                    MAX(CASE WHEN (m."average" + (m."standard_dev" * 2.58)) > (.9 * s."max_memory") THEN 1 ELSE 0 END)
+                FROM "PwrLabDevIntegrationStream_001" AS s
+                JOIN "METRICS_STREAM" AS m
+                    ON s."message" = m."message" 
+                    AND FLOOR(s.ROWTIME TO HOUR) = m."rt"  
+                WHERE 
+                        ((m."average" + (m."standard_dev" * 2.58)) > (.9 * s."max_memory"))
+                        OR ((m."average" + (m."standard_dev" * 2.58)) < (.8 * s."prev_memory_tier"))
+                GROUP BY FLOOR(s.ROWTIME TO HOUR), m."rt", m."message", m."average", m."standard_dev", s."max_memory", s."prev_memory_tier";
+                            
+        """
+
+        analytics_stream = template.add_resource(analytics.Application(
+            self._analytics_application_resource_name(context.name),
+            ApplicationName=self._analytics_application_resource_name(context.name),
+            ApplicationConfiguration=analytics.ApplicationConfiguration(
+                ApplicationCodeConfiguration=analytics.ApplicationCodeConfiguration(
+                    CodeContent=analytics.CodeContent(
+                        TextContent=sql
+                    ),
+                    CodeContentType="PLAINTEXT"
+                ),
+                SqlApplicationConfiguration=analytics.SqlApplicationConfiguration(
+                    Inputs=[analytics.Input(
+                        InputSchema=analytics.InputSchema(
+                            RecordColumns=[
+                                analytics.RecordColumn(Mapping='event_type', Name='event_type', SqlType='CHAR(64)'),
+                                analytics.RecordColumn(Mapping='message', Name='message', SqlType='CHAR(128)'),
+                                analytics.RecordColumn(Mapping='memory_used', Name='memory_used', SqlType='NUMERIC'),
+                                analytics.RecordColumn(Mapping='run_time', Name='run_time', SqlType='NUMERIC'),
+                                analytics.RecordColumn(Mapping='max_memory', Name='max_memory', SqlType='NUMERIC'),
+                                analytics.RecordColumn(Mapping='prev_memory_tier', Name='prev_memory_tier', SqlType='NUMERIC'),
+                            ],
+                            RecordFormat=analytics.RecordFormat(
+                                RecordFormatType="JSON"
+                            ),
+                        ),
+                        KinesisStreamsInput=analytics.KinesisStreamsInput(
+                            ResourceARN=GetAtt(stream, 'Arn'),
+                        ),
+                        NamePrefix=stream_name
+                    )]
+                )
+            ),
+            RuntimeEnvironment="SQL-1_0",
+            ServiceExecutionRole=GetAtt(role, 'Arn'),
+            DependsOn=stream
+        ))
+
+        template.add_resource(analytics.ApplicationOutput(
+            f'{self._analytics_application_resource_name(context.name)}Output',
+            ApplicationName=self._analytics_application_resource_name(context.name),
+            Output=analytics.Output(
+                DestinationSchema=analytics.DestinationSchema(
+                    RecordFormatType="JSON"
+                ),
+                LambdaOutput=analytics.LambdaOutput(
+                    ResourceARN=GetAtt(lambda_function, 'Arn')
+                )
+            ),
+            DependsOn=analytics_stream
+        ))
+
+    def _add_adaptive_memory_functions(self, template, context: ff.Context, timeout, role_title, async_lambda):
+        memory_settings = self._configuration.contexts.get('firefly_aws').get('memory_settings')
+        if memory_settings is None:
+            raise ff.ConfigurationError('To use adaptive memory, you must provide a list of memory_settings')
+
+        for memory in memory_settings:
+            memory_size = template.add_parameter(Parameter(
+                f'{self._lambda_resource_name(context.name)}{memory}MemorySize',
+                Type=NUMBER,
+                Default=str(memory)
+            ))
+
+            params = {
+                'FunctionName': self._lambda_function_name(context.name, 'Async', memory=memory),
+                'Role': GetAtt(role_title, 'Arn'),
+                'MemorySize': Ref(memory_size),
+                'Timeout': Ref(timeout),
+                'Environment': self._lambda_environment(context),
+                'DependsOn': async_lambda,
+            }
+
+            image_uri = self._aws_config.get('image_uri')
+            if image_uri is not None:
+                params.update({
+                    'Code': Code(
+                        ImageUri=image_uri
+                    ),
+                    'PackageType': 'Image',
+                })
+            else:
+                params.update({
+                    'Code': Code(
+                        S3Bucket=self._bucket,
+                        S3Key=self._code_key
+                    ),
+                    'Runtime': 'python3.7',
+                    'Handler': 'handlers.main',
+                })
+
+            if self._security_group_ids and self._subnet_ids:
+                params['VpcConfig'] = VPCConfig(
+                    SecurityGroupIds=self._security_group_ids,
+                    SubnetIds=self._subnet_ids
+                )
+
+            adaptive_memory_lambda = template.add_resource(Function(
+                self._lambda_resource_name(context.name, memory=memory),
+                **params
+            ))
+
+            queue = template.add_resource(Queue(
+                self._queue_name(context.name, memory=memory),
+                QueueName=self._queue_name(context.name, memory=memory),
+                VisibilityTimeout=905,
+                ReceiveMessageWaitTimeSeconds=20,
+                MessageRetentionPeriod=1209600,
+                DependsOn=[adaptive_memory_lambda]
+            ))
+            # self._queue_policy(template, queue, self._queue_name(context.name), subscriptions)
+
+            template.add_resource(EventSourceMapping(
+                f'{self._lambda_resource_name(context.name, memory=memory)}AsyncMapping',
+                BatchSize=1,
+                Enabled=True,
+                EventSourceArn=GetAtt(queue, 'Arn'),
+                FunctionName=self._lambda_function_name(context.name, 'Async', memory=memory),
+                DependsOn=[queue, adaptive_memory_lambda]
+            ))
 
     def _migrate_schema(self, context: ff.Context):
         for entity in context.entities:
@@ -560,7 +783,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         memory_size = template.add_parameter(Parameter(
             f'{self._stack_name()}MemorySize',
             Type=NUMBER,
-            Default=self._aws_config.get('memory', '3008')
+            Default=self._aws_config.get('memory_sync', '3008')
         ))
 
         timeout_gateway = template.add_parameter(Parameter(
@@ -713,16 +936,18 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
                                 'Action': [
                                     'athena:*',
                                     'cloudfront:CreateInvalidation',
+                                    'dynamodb:*',
                                     'ec2:*NetworkInterface',
                                     'ec2:DescribeNetworkInterfaces',
                                     'glue:*',
+                                    'kinesis:*',
+                                    'kinesisanalytics:*',
                                     'lambda:InvokeFunction',
                                     'rds-data:*',
                                     's3:*',
                                     'secretsmanager:GetSecretValue',
                                     'sns:*',
                                     'sqs:*',
-                                    'dynamodb:*',
                                 ],
                                 'Resource': '*',
                                 'Effect': 'Allow',
@@ -737,7 +962,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
                     'Action': ['sts:AssumeRole'],
                     'Effect': 'Allow',
                     'Principal': {
-                        'Service': ['lambda.amazonaws.com']
+                        'Service': ['lambda.amazonaws.com', 'kinesisanalytics.amazonaws.com']
                     }
                 }]
             }
@@ -752,6 +977,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         self._wait_for_stack(stack_name)
 
     def _update_stack(self, stack_name: str, template: str):
+
         try:
             self._cloudformation_client.update_stack(
                 StackName=stack_name,
@@ -782,6 +1008,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             'REGION': self._region,
             'BUCKET': self._bucket,
             'DDB_TABLE': self._ddb_table_name(context.name),
+            'ADAPTIVE_MEMORY': self._adaptive_memory,
         }
         if env is not None:
             defaults.update(env)

@@ -32,27 +32,37 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
     _sqs_resource = None
     _s3_client = None
     _bucket: str = None
+    _context: str = None
 
     def dispatch(self, event: Event) -> None:
         try:
-            self._sns_client.publish(
-                TopicArn=self._topic_arn(event.get_context()),
-                Message=self._store_large_payloads_in_s3(self._serializer.serialize(event)),
-                MessageAttributes={
-                    '_name': {
-                        'DataType': 'String',
-                        'StringValue': event.__class__.__name__,
-                    },
-                    '_type': {
-                        'DataType': 'String',
-                        'StringValue': 'event'
-                    },
-                    '_context': {
-                        'DataType': 'String',
-                        'StringValue': event.get_context()
-                    },
-                }
-            )
+            if hasattr(event, '_memory'):
+                self._enqueue_message(event, context=self._context)
+            else:
+                self._sns_client.publish(
+                    TopicArn=self._topic_arn(event.get_context()),
+                    Message=self._store_large_payloads_in_s3(
+                        self._serializer.serialize(event),
+                        name=event.__class__.__name__,
+                        type_='command' if isinstance(event, ff.Command) else 'event',
+                        context=event.get_context(),
+                        id_=getattr(event, '_id', str(uuid.uuid4()))
+                    ),
+                    MessageAttributes={
+                        '_name': {
+                            'DataType': 'String',
+                            'StringValue': event.__class__.__name__,
+                        },
+                        '_type': {
+                            'DataType': 'String',
+                            'StringValue': 'event'
+                        },
+                        '_context': {
+                            'DataType': 'String',
+                            'StringValue': event.get_context()
+                        },
+                    }
+                )
         except ClientError as e:
             raise ff.MessageBusError(str(e))
 
@@ -64,7 +74,7 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
 
     def _invoke_lambda(self, message: Union[Command, Query]):
         if hasattr(message, '_async') and getattr(message, '_async') is True:
-            return self._invoke_async(message)
+            return self._enqueue_message(message)
 
         try:
             response = ff.retry(
@@ -85,6 +95,17 @@ class BotoMessageTransport(ff.MessageTransport, domain.ResourceNameAware):
 
         return ret
 
-    def _invoke_async(self, message: Command):
-        queue = self._sqs_resource.get_queue_by_name(QueueName=self._queue_name(message.get_context()))
-        queue.send_message(MessageBody=self._store_large_payloads_in_s3(self._serializer.serialize(message)))
+    def _enqueue_message(self, message: ff.Message, context: str = None):
+        memory = None
+        if hasattr(message, '_memory'):
+            memory = getattr(message, '_memory')
+        queue = self._sqs_resource.get_queue_by_name(
+            QueueName=self._queue_name(context or message.get_context(), memory=memory)
+        )
+        queue.send_message(MessageBody=self._store_large_payloads_in_s3(
+            self._serializer.serialize(message),
+            name=message.__class__.__name__,
+            type_='command' if isinstance(message, ff.Command) else 'event',
+            context=message.get_context(),
+            id_=getattr(message, '_id', str(uuid.uuid4()))
+        ))

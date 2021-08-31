@@ -12,11 +12,12 @@
 #  You should have received a copy of the GNU General Public License along with Firefly. If not, see
 #  <http://www.gnu.org/licenses/>.
 
-from .aws_agent import AwsAgent
+from .agent import *
 from .boto_message_transport import BotoMessageTransport
 from .boto_s3_service import BotoS3Service
 from .cognito_jwt_decoder import CognitoJwtDecoder
 from .data_api import DataApi
 from .ddb_mutex import DdbMutex
 from .ddb_rate_limiter import DdbRateLimiter
+from .ddb_resource_monitor import *
 from .s3_file_system import S3FileSystem
