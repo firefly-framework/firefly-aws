@@ -73,7 +73,7 @@ class S3FileSystem(ff.FileSystem, ff.LoggerAware):
                 if isinstance(v, str):
                     where = where.replace(f':{k}', f"'{v}'")
                 elif isinstance(v, (datetime, date)):
-                    format_ = 'y-MM-dd''T''H:m:ss' if isinstance(v, datetime) else 'y-MM-dd'
+                    format_ = "y-MM-dd''T''H:m:ss" if isinstance(v, datetime) else 'y-MM-dd'
                     where = where.replace(f':{k}', f"TO_TIMESTAMP('{v.isoformat()}', '{format_}')")
                 else:
                     where = where.replace(f':{k}', str(v))
