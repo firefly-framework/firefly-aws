@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Tuple, List
 
 import firefly as ff
@@ -71,6 +72,9 @@ class S3FileSystem(ff.FileSystem, ff.LoggerAware):
             for k, v in params.items():
                 if isinstance(v, str):
                     where = where.replace(f':{k}', f"'{v}'")
+                elif isinstance(v, (datetime, date)):
+                    format_ = 'y-MM-dd''T''H:m:ss' if isinstance(v, datetime) else 'y-MM-dd'
+                    where = where.replace(f':{k}', f"TO_TIMESTAMP('{v.isoformat()}', '{format_}')")
                 else:
                     where = where.replace(f':{k}', str(v))
             sql += f' where {where}'
