@@ -1008,8 +1008,11 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             'REGION': self._region,
             'BUCKET': self._bucket,
             'DDB_TABLE': self._ddb_table_name(context.name),
-            'ADAPTIVE_MEMORY': self._adaptive_memory,
         }
+
+        if self._adaptive_memory is not None:
+            defaults['ADAPTIVE_MEMORY'] = self._adaptive_memory
+
         if env is not None:
             defaults.update(env)
 
