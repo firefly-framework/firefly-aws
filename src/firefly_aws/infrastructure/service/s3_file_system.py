@@ -71,7 +71,8 @@ class S3FileSystem(ff.FileSystem, ff.LoggerAware):
             where, params = criteria.to_sql(prefix='s')
             for k, v in params.items():
                 if isinstance(v, str):
-                    where = where.replace(f':{k}', f"'{v}'")
+                    v_ = f"{v}" if v == 'null' else f"'{v}'"
+                    where = where.replace(f':{k}', v_)
                 elif isinstance(v, (datetime, date)):
                     format_ = "y-MM-dd''T''H:m:ss" if isinstance(v, datetime) else 'y-MM-dd'
                     where = where.replace(f':{k}', f"TO_TIMESTAMP('{v.isoformat()}', '{format_}')")
