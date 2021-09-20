@@ -1,3 +1,4 @@
+from .deconstruct_entity import DeconstructEntity
 from .dynamodb_connection_factory import DynamodbConnectionFactory
 from .dynamodb_repository import DynamodbRepository
 from .dynamodb_repository_factory import DynamodbRepositoryFactory

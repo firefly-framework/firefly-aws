@@ -14,24 +14,28 @@
 
 from __future__ import annotations
 
-from abc import ABC
-from dataclasses import fields
+import json
 from datetime import datetime, date
 from math import ceil
+from pprint import pprint
 from typing import Type, Union, Callable, Tuple, List
 
 import firefly as ff
 import firefly.infrastructure as ffi
 from botocore.exceptions import ClientError
+from dynamodb_json import json_util
 from firefly import domain as ffd
 
 import firefly_aws.domain as domain
-from firefly_aws.infrastructure.service.data_api import DataApi
+from . import DeconstructEntity
 
 
-class DynamodbStorageInterface(ffi.AbstractStorageInterface, ABC):
+class DynamodbStorageInterface(ffi.AbstractStorageInterface):
     _serializer: ffi.JsonSerializer = None
     _batch_process: ffd.BatchProcess = None
+    _deconstruct_entity: DeconstructEntity = None
+    _ddb_client = None
+    _ddb_table: str = None
     _cache: dict = None
     _table: str = None
 
@@ -42,22 +46,33 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface, ABC):
     def _add(self, entity: List[ffd.Entity]):
         self._store(self._deconstruct_entities(entity))
 
-    def _store(self, entities: List[dict]):
-        pass
+    def _store(self, aggregates: List[dict]):
+        for entities in aggregates:
+            root = list(filter(lambda e: e['sk'] == 'root', entities)).pop()
+            if 'ff_version' not in root:
+                root['ff_version'] = 1
+            else:
+                root['ff_version'] += 1
+            self._do_store(root, check_version=True)
+            parts = list(map(lambda e: (e, False), list(filter(lambda e: e['sk'] != 'root', entities))))
+            self._batch_process(self._do_store, parts)
+
+    def _do_store(self, data: dict, check_version: bool = False):
+        args = {
+            'TableName': self._ddb_table,
+            'Item': json.loads(json_util.dumps(data)),
+        }
+
+        if check_version:
+            args['ConditionExpression'] = "attribute_not_exists(pk) or ff_version = :version"
+            args['ExpressionAttributeValues'] = json.loads(json_util.dumps({
+                ':version': data['ff_version'] - 1,
+            }))
+
+        self._ddb_client.put_item(**args)
 
     def _deconstruct_entities(self, entity: List[ffd.Entity]):
         return [self._deconstruct_entity(e) for e in entity]
-
-    def _deconstruct_entity(self, entity: ffd.Entity):
-        ret = {}
-
-        for field_ in fields(entity):
-            if isinstance(entity, ff.Entity):
-                pass
-            else:
-                ret[field_.name] = field_.value
-
-        return ret
 
     def _all(self, entity_type: Type[ffd.Entity], criteria: ffd.BinaryOp = None, limit: int = None, offset: int = None,
              sort: Tuple[Union[str, Tuple[str, bool]]] = None, raw: bool = False, count: bool = False):
@@ -97,7 +112,7 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface, ABC):
         n = self._size_limit_kb * 1024
         first = True
         try:
-            version = getattr(entity, '__ff_version')
+            version = getattr(entity, '_ff_version')
         except AttributeError:
             version = 1
 
@@ -194,7 +209,7 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface, ABC):
 
             result = self._execute(f"select version from {self._fqtn(entity)} where {entity.id_name()} = '{id_}'")
             ret = entity.from_dict(self._serializer.deserialize(document))
-            setattr(ret, '__ff_version', result[0]['version'])
+            setattr(ret, '_ff_version', result[0]['version'])
 
         return ret
 
@@ -335,3 +350,12 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface, ABC):
             return ret
         else:
             return result['numberOfRecordsUpdated']
+
+    def clear(self, entity: Type[ffd.Entity]):
+        pass
+
+    def destroy(self, entity: Type[ffd.Entity]):
+        pass
+
+    def _build_entity(self, entity: Type[ffd.Entity], data, raw: bool = False):
+        pass

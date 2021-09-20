@@ -15,6 +15,7 @@ setuptools.setup(
         'boto3>=1.12.42',
         'cognitojwt>=1.2.2',
         'dateparser>=0.7.4',
+        'dynamodb-json>=1.3',
         'firefly-dependency-injection>=1.0.0',
         'firefly-framework>=1.1.56',
         'Jinja2>=2.11.1',
