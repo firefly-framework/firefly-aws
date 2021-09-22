@@ -149,9 +149,9 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                     return event
                 raise
         elif isinstance(message, ff.Query):
-            self.debug('Handling query from within DC')
+            print('Handling query from within DC')
             response = self.request(message)
-            self.debug("Got response: %s", str(response))
+            print("Got response: ", str(response))
             return self._serializer.deserialize(
                 self._store_large_payloads_in_s3(
                     self._serializer.serialize(response),
