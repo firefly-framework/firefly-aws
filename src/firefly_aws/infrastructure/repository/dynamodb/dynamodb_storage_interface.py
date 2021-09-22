@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import fields
 from datetime import datetime, date
 from math import ceil
 from pprint import pprint
@@ -27,13 +28,16 @@ from dynamodb_json import json_util
 from firefly import domain as ffd
 
 import firefly_aws.domain as domain
-from . import DeconstructEntity
+from .generate_key_and_filter_expressions import GenerateKeyAndFilterExpressions
+from .generate_pk import GeneratePk
 
 
+# noinspection PyDataclass
 class DynamodbStorageInterface(ffi.AbstractStorageInterface):
     _serializer: ffi.JsonSerializer = None
     _batch_process: ffd.BatchProcess = None
-    _deconstruct_entity: DeconstructEntity = None
+    _generate_pk: GeneratePk = None
+    _generate_key_and_filter_expressions: GenerateKeyAndFilterExpressions = None
     _ddb_client = None
     _ddb_table: str = None
     _cache: dict = None
@@ -44,7 +48,49 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface):
         self._table = table
 
     def _add(self, entity: List[ffd.Entity]):
-        self._store(self._deconstruct_entities(entity))
+        # self._store(self._deconstruct_entities(entity))
+        aggregates = []
+        for e in entity:
+            data = e.to_dict()
+            data['pk'] = self._generate_pk(e)
+            data['sk'] = 'root'
+            if 'ff_version' not in data:
+                data['ff_version'] = 1
+            else:
+                data['ff_version'] += 1
+
+            for index, fields_ in self._get_indexes(e.__class__).items():
+                fields_.sort(key=lambda i: i['order'])
+                data[f'gsi_{index}'] = '#'.join(list(map(lambda i: str(getattr(e, i['field'])), fields_)))
+            aggregates.append(data)
+
+        for aggregate in aggregates:
+            self._do_store(aggregate, check_version=True)
+
+    def _get_indexes(self, type_: Type[ffd.Entity]) -> dict:
+        ret = {}
+        for field_ in fields(type_):
+            idx = field_.metadata.get('index')
+            if idx is not None:
+                if not isinstance(idx, int):
+                    raise ff.ConfigurationError('Dynamodb indexes must be integers')
+                if idx < 1:
+                    raise ff.ConfigurationError(f"Got index {idx}. Dynamodb indexes start at 1")
+                if idx not in ret:
+                    ret[idx] = []
+                mismatches = list(filter(lambda i: i['field'] != field_.name, ret[idx]))
+                if len(mismatches) > 0:
+                    raise ff.ConfigurationError(
+                        f"Can't construct index (gsi_{idx}) for field {field_.name}. There are other fields with the "
+                        f"same index: {', '.join(list(map(lambda i: i['field'], mismatches)))}"
+                    )
+                ret[idx].append({
+                    'field': field_.name,
+                    'index': idx,
+                    'order': field_.metadata.get('order', 1),
+                })
+
+        return ret
 
     def _store(self, aggregates: List[dict]):
         for entities in aggregates:
@@ -54,8 +100,9 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface):
             else:
                 root['ff_version'] += 1
             self._do_store(root, check_version=True)
-            parts = list(map(lambda e: (e, False), list(filter(lambda e: e['sk'] != 'root', entities))))
-            self._batch_process(self._do_store, parts)
+            parts = list(filter(lambda e: e['sk'] != 'root', entities))
+            for part in parts:
+                self._do_store(part)
 
     def _do_store(self, data: dict, check_version: bool = False):
         args = {
@@ -90,10 +137,53 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface):
                 return self._fetch_multiple_large_documents(query[0], query[1], entity_type)
 
     def _find(self, uuid: Union[str, Callable], entity_type: Type[ffd.Entity]):
-        try:
-            return super()._find(uuid, entity_type)
-        except domain.DocumentTooLarge:
-            return self._fetch_large_document(uuid, entity_type)
+        params = {
+            'TableName': self._ddb_table,
+            'Select': 'ALL_ATTRIBUTES',
+        }
+        if isinstance(uuid, str):
+            params.update({
+                'KeyConditionExpression': 'pk = :pk',
+                'ExpressionAttributeValues': json_util.dumps({
+                    ':pk': self._generate_pk(entity_type, id_=uuid)
+                }, as_dict=True),
+            })
+        else:
+            key_expression, key_bindings, filter_expression, filter_bindings = \
+                self._generate_key_and_filter_expressions(uuid(ff.EntityAttributeSpy()), self._get_indexes(entity_type))
+            key_bindings.update(filter_bindings)
+            bindings = {}
+            for k, v in key_bindings.items():
+                bindings[f":{k}"] = v
+
+            key_expression = f"begins_with(pk, :entity_type) AND {key_expression}"
+            bindings[':entity_type'] = entity_type.__name__
+
+            params.update({
+                'KeyConditionExpression': key_expression,
+                'FilterExpression': filter_expression,
+                'ExpressionAttributeValues': json_util.dumps(bindings, as_dict=True),
+            })
+            pprint(params)
+            # exit()
+
+        items = self._query(params)
+
+        if len(items) == 0:
+            return items
+
+        return entity_type.from_dict(json_util.loads(items.pop(), as_dict=True))
+
+    def _query(self, params: dict):
+        items = []
+        while True:
+            response = self._ddb_client.query(**params)
+            items.extend(response['Items'])
+            if 'LastEvaluatedKey' not in response:
+                break
+            params['ExclusiveStartKey'] = response['LastEvaluatedKey']
+
+        return items
 
     def _remove(self, entity: ffd.Entity):
         return super()._remove(entity)

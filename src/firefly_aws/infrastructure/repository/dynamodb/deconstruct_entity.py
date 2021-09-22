@@ -6,12 +6,16 @@ from typing import get_type_hints, List, Dict, Union
 
 import firefly as ff
 
+from .generate_pk import GeneratePk
+
 
 class DeconstructEntity(ff.Dependency):
+    _generate_pk: GeneratePk = None
+
     # noinspection PyDataclass
     def __call__(self, entity: ff.Entity, path: list = None, pk: str = None):
         path = path or []
-        pk = pk or f"{entity.__class__.__name__}#{entity.id_value()}"
+        pk = pk or self._generate_pk(entity)
         sk = '.'.join(path)
         ret = []
         data = {}
