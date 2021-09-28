@@ -41,6 +41,12 @@ services = {
             'db_secret_arn': os.environ['DB_SECRET_ARN_PG10'],
             'db_name': os.environ['DB_NAME'],
         }
+    },
+    'ddb': {
+        'type': 'dynamodb',
+        'connection': {
+            'driver': 'dynamodb',
+        },
     }
 }
 
@@ -99,7 +105,7 @@ def config():
     }
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def wake_up_database(container):
     while True:
         try:
@@ -137,6 +143,7 @@ def build_repositories(entity, container):
         'data_api_mysql': build_repository(RdbRepository[entity], container, 'data_api_mysql'),
         'data_api_mysql_mapped': build_repository(RdbRepository[entity], container, 'data_api_mysql_mapped'),
         'data_api_pg': build_repository(RdbRepository[entity], container, 'data_api_pg'),
+        'dynamodb': build_repository(RdbRepository[entity], container, 'dynamodb'),
     }
 
 
@@ -153,7 +160,7 @@ def build_repository(base, container, interface):
 tables = ['todo.todo_lists', 'iam.users', 'iam.roles', 'iam.scopes']
 
 
-@pytest.fixture(scope='function', autouse=True)
+@pytest.fixture(scope='function')
 def drop_tables(todo_repositories, user_repositories, role_repositories, scope_repositories):
     list(todo_repositories.values())[0].destroy()
     list(user_repositories.values())[0].destroy()

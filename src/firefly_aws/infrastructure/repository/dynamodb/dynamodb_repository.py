@@ -1,22 +1,29 @@
 from __future__ import annotations
 
-import inspect
-import typing
-from dataclasses import fields
-from datetime import datetime, date
-from pprint import pprint
 from typing import Optional, Union, Callable, Tuple, List
 
 import firefly as ff
+from firefly import infrastructure
 from firefly import domain as ffd, Repository
 from firefly.domain.repository.repository import T
 
+from .dynamodb_storage_interface import DynamodbStorageInterface
+
+DEFAULT_LIMIT = 999999999999999999
+
 
 class DynamodbRepository(ff.Repository[T]):
+    _interface: DynamodbStorageInterface = None
     _ddb_client = None
     _cache: dict = {
         'entity_composition': {},
     }
+
+    def __init__(self, interface: DynamodbStorageInterface):
+        super().__init__()
+        self._entity_type = self._type()
+        self._query_details = {}
+        self._interface = interface
 
     def append(self, entity: Union[T, List[T], Tuple[T]], **kwargs) -> DynamodbRepository:
         if isinstance(entity, (list, tuple)):
@@ -37,10 +44,20 @@ class DynamodbRepository(ff.Repository[T]):
         return self
 
     def find(self, x: Union[str, Callable, ffd.BinaryOp], **kwargs) -> Optional[T]:
-        pass
+        ret = self._interface.find(x, self._type())
+        if isinstance(ret, ff.AggregateRoot):
+            self.register_entity(ret)
+
+        return ret
 
     def filter(self, x: Union[Callable, ffd.BinaryOp], **kwargs) -> Repository:
-        pass
+        criteria = x
+        if not isinstance(criteria, ff.BinaryOp):
+            criteria = x(ff.EntityAttributeSpy())
+        ret = self._interface.all(self._type(), criteria)
+        list(map(lambda e: self.register_entity(e), ret))
+
+        return ret
 
     def commit(self, force_delete: bool = False):
         self.debug('commit() called in %s', str(self))
@@ -52,7 +69,7 @@ class DynamodbRepository(ff.Repository[T]):
         new_entities = self._new_entities()
         if len(new_entities) > 0:
             self.debug('Adding %s', new_entities)
-            if self._do_add(new_entities) != len(new_entities):
+            if self._interface.add(new_entities) != len(new_entities):
                 raise ffd.ConcurrentUpdateDetected()
 
         for entity in self._changed_entities():
@@ -65,120 +82,77 @@ class DynamodbRepository(ff.Repository[T]):
         pass
 
     def clear(self):
-        pass
+        self._interface.clear(self._entity_type)
 
     def destroy(self):
-        pass
+        self._interface.destroy(self._entity_type)
+
+    def copy(self):
+        ret = self.__class__()
+        ret._query_details = self._query_details.copy()
+        ret._entities = []
+        ret._entity_hashes = {}
+        ret._deletions = []
+        ret._parent = self
+
+        deletions = self._deletions
+        entities = self._new_entities()
+        self.reset()
+        self._deletions = deletions
+        self._entities = entities
+
+        return ret
 
     def __iter__(self):
-        pass
+        if 'raw' in self._query_details and self._query_details['raw'] is True:
+            return iter(self._load_data())
+        self._load_data()
+        return iter(list(self._entities))
 
     def __len__(self):
-        pass
+        params = self._query_details.copy()
+        if 'criteria' in params and not isinstance(params['criteria'], ffd.BinaryOp):
+            params['criteria'] = self._get_search_criteria(params['criteria'])
+        return self._interface.all(self._entity_type, count=True, **params)
 
     def __getitem__(self, item):
-        pass
+        if isinstance(item, slice):
+            if item.start is not None:
+                self._query_details['offset'] = item.start
+            if item.stop is not None:
+                self._query_details['limit'] = (item.stop - item.start) + 1
+            else:
+                self._query_details['limit'] = DEFAULT_LIMIT
+        else:
+            if len(self._entities) > item:
+                return self._entities[item]
+            self._query_details['offset'] = item
+            self._query_details['limit'] = 1
+
+        if 'raw' in self._query_details and self._query_details['raw'] is True:
+            return self._load_data()
+
+        self._load_data()
+
+        if isinstance(item, slice):
+            return self._entities
+        elif len(self._entities) > 0:
+            return self._entities[-1]
+
+    def _load_data(self):
+        query_details = self._query_details
+
+        if 'criteria' not in query_details:
+            query_details['criteria'] = None
+
+        results = self._do_filter(**query_details)
+        if 'raw' in query_details and query_details['raw'] is True:
+            return results
+
+        if isinstance(results, list):
+            for entity in results:
+                if entity not in self._entities:
+                    self.register_entity(entity)
 
     def _do_delete(self, entity: ff.Entity):
         pass
-
-    def _do_add(self, entities: List[ff.Entity]) -> int:
-        for entity in entities:
-            self._decompose_entity(entity)
-
-    def _to_item(self, raw):
-        if isinstance(raw, ff.ValueObject):
-            raw = raw.to_dict()
-
-        if isinstance(raw, dict):
-            return {
-                'M': {
-                    k: self._to_item(v)
-                    for k, v in raw.items()
-                }
-            }
-        elif isinstance(raw, list):
-            return {
-                'L': [self._to_item(v) for v in raw]
-            }
-        elif isinstance(raw, (date, datetime)):
-            return {'S': raw.isoformat()}
-        elif raw is None:
-            return {'NULL': True}
-        elif isinstance(raw, bool):
-            return {'BOOL': raw}
-        elif isinstance(raw, str):
-            return {'S': raw}
-        elif isinstance(raw, int):
-            return {'N': str(raw)}
-
-    def _decompose_entity(self, entity: ff.Entity, root: ff.Entity = None, attr_chain: List[str] = None) -> List[dict]:
-        attr_chain = attr_chain or []
-        ret = []
-        data = entity.to_dict()
-        types = typing.get_type_hints(entity.__class__)
-
-        if entity.__class__.__name__ not in self._cache['entity_composition']:
-            comp = {
-                'entity_fields': {
-                    'single': [],
-                    'list': [],
-                    'dict': [],
-                },
-                'normal_fields': [],
-            }
-            # noinspection PyDataclass
-            for field_ in fields(entity.__class__):
-                try:
-                    t = types[field_.name]
-                except KeyError:
-                    t = None
-
-                if t is not None:
-                    if ff.is_type_hint(t):
-                        # Handle Union, List, Dict
-                        origin = ff.get_origin(t)
-                        args = ff.get_args(t)
-                        if origin is List:
-                            if issubclass(args[0], ff.Entity):
-                                comp['entity_fields']['list'].append(field_.name)
-                        elif origin is typing.Dict:
-                            if issubclass(args[1], ff.Entity):
-                                comp['entity_fields']['dict'].append(field_.name)
-                        pass
-                    elif issubclass(types[field_.name], ff.Entity):
-                        comp['entity_fields']['single'].append(field_.name)
-                    else:
-                        comp['normal_fields'].append(field_.name)
-                else:
-                    comp['normal_fields'].append(field_.name)
-
-            self._cache['entity_composition'][entity.__class__.__name__] = comp
-
-        comp = self._cache['entity_composition'][entity.__class__.__name__]
-        for name in comp['entity_fields']['single']:
-            ret.extend(self._decompose_entity(getattr(entity, name), root or entity, attr_chain + [name]))
-            del data[name]
-
-        for name in comp['entity_fields']['list']:
-            list(map(
-                lambda f: ret.extend(self._decompose_entity(f, root or entity, attr_chain + [name])),
-                getattr(entity, name)
-            ))
-
-        item = {
-            'pk': self._entity_key(entity) if root is None else self._entity_key(root),
-            'sk': self._entity_key(entity),
-        }
-        if len(attr_chain) > 0:
-            item['__location'] = self._to_item(':'.join(attr_chain))
-
-        for name in comp['normal_fields']:
-            item[name] = self._to_item(getattr(entity, name))
-        ret.append(item)
-
-        pprint(ret)
-        return ret
-
-    def _entity_key(self, entity: ff.Entity) -> str:
-        return f'{entity.__class__.__name__}#{entity.id_value()}'

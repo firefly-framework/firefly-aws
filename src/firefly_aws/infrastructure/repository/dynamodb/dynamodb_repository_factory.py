@@ -20,6 +20,7 @@ import firefly as ff
 import firefly_di as di
 
 from firefly_aws.infrastructure.repository.dynamodb.dynamodb_repository import DynamodbRepository
+from .dynamodb_storage_interface import DynamodbStorageInterface
 
 E = TypeVar('E', bound=ff.Entity)
 
@@ -35,4 +36,4 @@ class DynamodbRepositoryFactory(ff.RepositoryFactory):
         class Repo(DynamodbRepository[entity]):
             pass
 
-        return self._container.build(Repo)
+        return self._container.build(Repo, interface=self._container.build(DynamodbStorageInterface))

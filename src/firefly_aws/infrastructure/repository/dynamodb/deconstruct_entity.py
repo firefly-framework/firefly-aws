@@ -13,7 +13,7 @@ class DeconstructEntity(ff.Dependency):
     _generate_pk: GeneratePk = None
 
     # noinspection PyDataclass
-    def __call__(self, entity: ff.Entity, path: list = None, pk: str = None):
+    def __call__(self, entity: ff.Entity, path: list = None, pk: str = None) -> List[dict]:
         path = path or []
         pk = pk or self._generate_pk(entity)
         sk = '.'.join(path)
@@ -51,6 +51,19 @@ class DeconstructEntity(ff.Dependency):
             data['sk'] = 'root'
         ret.append(data)
 
+        # GSI's must be set across all components of this Aggregate in order for searches to work efficiently.
+        for e in ret:
+            e['gsi_20'] = entity.__class__.__name__
+            for i in range(1, 21):
+                index = f"gsi_{i}"
+                if index not in e:
+                    continue
+                else:
+                    val = e.get(index)
+                    for f in ret:
+                        if index not in f:
+                            f[index] = val
+
         return ret
 
     def _process_entity(self, field_, entity, path, pk, ret):
@@ -69,7 +82,7 @@ class DeconstructEntity(ff.Dependency):
             data[field_.name] = getattr(entity, field_.name)
         idx = field_.metadata.get('index')
         if idx is not None:
-            if not isinstance(idx, int):
+            if not isinstance(idx, int) or idx is True:
                 raise ff.ConfigurationError('Dynamodb indexes must be integers')
             data[f'gsi_{idx}'] = str(data[field_.name])
 

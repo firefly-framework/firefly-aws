@@ -15,9 +15,8 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import fields
-from datetime import datetime, date
-from math import ceil
 from pprint import pprint
 from typing import Type, Union, Callable, Tuple, List
 
@@ -27,9 +26,10 @@ from botocore.exceptions import ClientError
 from dynamodb_json import json_util
 from firefly import domain as ffd
 
-import firefly_aws.domain as domain
+from .deconstruct_entity import DeconstructEntity
 from .generate_key_and_filter_expressions import GenerateKeyAndFilterExpressions
 from .generate_pk import GeneratePk
+from .reconstruct_entity import ReconstructEntity
 
 
 # noinspection PyDataclass
@@ -38,6 +38,8 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface):
     _batch_process: ffd.BatchProcess = None
     _generate_pk: GeneratePk = None
     _generate_key_and_filter_expressions: GenerateKeyAndFilterExpressions = None
+    _deconstruct_entity: DeconstructEntity = None
+    _reconstruct_entity: ReconstructEntity = None
     _ddb_client = None
     _ddb_table: str = None
     _cache: dict = None
@@ -48,24 +50,10 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface):
         self._table = table
 
     def _add(self, entity: List[ffd.Entity]):
-        # self._store(self._deconstruct_entities(entity))
-        aggregates = []
-        for e in entity:
-            data = e.to_dict()
-            data['pk'] = self._generate_pk(e)
-            data['sk'] = 'root'
-            if 'ff_version' not in data:
-                data['ff_version'] = 1
-            else:
-                data['ff_version'] += 1
+        return self._store(self._deconstruct_entities(entity))
 
-            for index, fields_ in self._get_indexes(e.__class__).items():
-                fields_.sort(key=lambda i: i['order'])
-                data[f'gsi_{index}'] = '#'.join(list(map(lambda i: str(getattr(e, i['field'])), fields_)))
-            aggregates.append(data)
-
-        for aggregate in aggregates:
-            self._do_store(aggregate, check_version=True)
+    def _deconstruct_entities(self, entity: List[ffd.Entity]):
+        return [self._deconstruct_entity(e) for e in entity]
 
     def _get_indexes(self, type_: Type[ffd.Entity]) -> dict:
         ret = {}
@@ -96,15 +84,19 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface):
         for entities in aggregates:
             root = list(filter(lambda e: e['sk'] == 'root', entities)).pop()
             if 'ff_version' not in root:
+                v = 1
                 root['ff_version'] = 1
             else:
+                v = root['ff_version']
                 root['ff_version'] += 1
-            self._do_store(root, check_version=True)
+            self._do_store(root, check_version=v)
             parts = list(filter(lambda e: e['sk'] != 'root', entities))
             for part in parts:
                 self._do_store(part)
 
-    def _do_store(self, data: dict, check_version: bool = False):
+        return len(aggregates)
+
+    def _do_store(self, data: dict, check_version: Union[bool, int] = False):
         args = {
             'TableName': self._ddb_table,
             'Item': json.loads(json_util.dumps(data)),
@@ -112,72 +104,121 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface):
 
         if check_version:
             args['ConditionExpression'] = "attribute_not_exists(pk) or ff_version = :version"
+            print(data)
             args['ExpressionAttributeValues'] = json.loads(json_util.dumps({
-                ':version': data['ff_version'] - 1,
+                ':version': check_version,
             }))
 
-        self._ddb_client.put_item(**args)
-
-    def _deconstruct_entities(self, entity: List[ffd.Entity]):
-        return [self._deconstruct_entity(e) for e in entity]
+        try:
+            self._ddb_client.put_item(**args)
+        except ClientError as e:
+            if 'conditional request failed' in str(e):
+                raise ff.ConcurrentUpdateDetected()
+            raise e
 
     def _all(self, entity_type: Type[ffd.Entity], criteria: ffd.BinaryOp = None, limit: int = None, offset: int = None,
              sort: Tuple[Union[str, Tuple[str, bool]]] = None, raw: bool = False, count: bool = False):
-        try:
-            return super()._all(
-                entity_type, criteria, limit=limit, offset=offset, sort=sort, raw=raw, count=count
-            )
-        except domain.DocumentTooLarge:
-            query = self._generate_select(
-                entity_type, criteria, limit=limit, offset=offset, sort=sort, count=count
-            )
-            try:
-                return self._paginate(query[0], query[1], entity_type, raw=raw)
-            except domain.DocumentTooLarge:
-                return self._fetch_multiple_large_documents(query[0], query[1], entity_type)
-
-    def _find(self, uuid: Union[str, Callable], entity_type: Type[ffd.Entity]):
         params = {
             'TableName': self._ddb_table,
             'Select': 'ALL_ATTRIBUTES',
         }
-        if isinstance(uuid, str):
-            params.update({
-                'KeyConditionExpression': 'pk = :pk',
-                'ExpressionAttributeValues': json_util.dumps({
-                    ':pk': self._generate_pk(entity_type, id_=uuid)
-                }, as_dict=True),
-            })
-        else:
-            key_expression, key_bindings, filter_expression, filter_bindings = \
-                self._generate_key_and_filter_expressions(uuid(ff.EntityAttributeSpy()), self._get_indexes(entity_type))
-            key_bindings.update(filter_bindings)
+
+        if count is not False:
+            params['Select'] = 'COUNT'
+
+        if criteria is not None:
+            key_expression, key_bindings, index, filter_expression, filter_bindings = \
+                self._generate_key_and_filter_expressions(criteria, self._get_indexes(entity_type))
+            combined = key_bindings.copy()
+            if 'pk = ' not in key_expression:
+                for k, v in filter_bindings.items():
+                    if k not in combined:
+                        combined[k] = v
             bindings = {}
-            for k, v in key_bindings.items():
+            for k, v in combined.items():
                 bindings[f":{k}"] = v
 
-            key_expression = f"begins_with(pk, :entity_type) AND {key_expression}"
-            bindings[':entity_type'] = entity_type.__name__
+            if 'pk = ' not in key_expression:
+                key_expression = f"begins_with(pk, :entity_type) AND {key_expression}"
+                bindings[':entity_type'] = entity_type.__name__
+                params.update({
+                    'FilterExpression': filter_expression,
+                })
+
+            if index is not None:
+                params['IndexName'] = index
 
             params.update({
                 'KeyConditionExpression': key_expression,
-                'FilterExpression': filter_expression,
                 'ExpressionAttributeValues': json_util.dumps(bindings, as_dict=True),
             })
-            pprint(params)
-            # exit()
+        elif count is False:
+            params.update({
+                'KeyConditionExpression': f"pk = :entity_type",
+                'ExpressionAttributeValues': json_util.dumps({
+                    ':entity_type': f'{entity_type.__name__}#',
+                }, as_dict=True),
+            })
+        else:
+            params.update({
+                'IndexName': 'gsi_20',
+                'KeyConditionExpression': "gsi_20 = :entity_type and sk = :root",
+                'ExpressionAttributeValues': json_util.dumps({
+                    ':entity_type': entity_type.__name__,
+                    ':root': 'root',
+                }, as_dict=True),
+            })
 
         items = self._query(params)
-
-        if len(items) == 0:
+        if count is not False and isinstance(items, int):
             return items
 
-        return entity_type.from_dict(json_util.loads(items.pop(), as_dict=True))
+        if len(items) == 0:
+            return []
+
+        items = self._reconstruct_entity(entity_type, items)
+
+        if limit is not None:
+            offset = offset or 0
+            end = offset + limit
+            items = items[offset:end]
+
+        if count is not False:
+            print(items)
+            return len(items)
+
+        if raw is True:
+            return list(map(lambda e: e.to_dict(), items))
+
+        return items
+
+    def _find(self, uuid: Union[str, Callable], entity_type: Type[ffd.Entity]):
+        if isinstance(uuid, str):
+            def _criteria(e):
+                return e.pk == self._generate_pk(entity_type, id_=uuid)
+            criteria = _criteria(ff.EntityAttributeSpy())
+        else:
+            criteria = uuid(ff.EntityAttributeSpy())
+
+        items = self._all(entity_type, criteria)
+        if len(items) == 0:
+            return None
+
+        if len(items) > 1:
+            raise ff.MultipleResultsFound()
+
+        return items[0]
 
     def _query(self, params: dict):
+        params = self._fix_reserved_words(params)
+        pprint(params)
         items = []
         while True:
             response = self._ddb_client.query(**params)
+            if 'Count' in response and 'Items' not in response:
+                items = int(response['Count'])
+                break
+
             items.extend(response['Items'])
             if 'LastEvaluatedKey' not in response:
                 break
@@ -185,261 +226,50 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface):
 
         return items
 
+    def _fix_reserved_words(self, params: dict):
+        if 'KeyConditionExpression' not in params:
+            return params
+
+        counter = 1
+        attribute_names = {}
+        condition = params['KeyConditionExpression'].lower()
+        for word in RESERVED_WORDS:
+            if f"{word.lower()} " in condition:
+                attr = f"#attr_{counter}"
+                counter += 1
+                condition = condition.replace(f"{word.lower()} ", f"{attr} ")
+                attribute_names[attr] = word.lower()
+
+        params['KeyConditionExpression'] = condition
+        if len(attribute_names.keys()) > 0:
+            params['ExpressionAttributeNames'] = attribute_names
+
+        return params
+
     def _remove(self, entity: ffd.Entity):
-        return super()._remove(entity)
+        if not isinstance(entity, list):
+            entity = [entity]
+
+        for e in entity:
+            for part in self._deconstruct_entity(e):
+                self._ddb_client.delete_item(
+                    TableName=self._ddb_table,
+                    Key=json_util.dumps({
+                        'pk': part['pk'],
+                        'sk': part['sk'],
+                    }, as_dict=True)
+                )
 
     def _update(self, entity: ffd.Entity):
-        try:
-            return super()._update(entity)
-        except domain.DocumentTooLarge:
-            self._insert_large_document(entity, update=True)
+        if not isinstance(entity, list):
+            entity = [entity]
+        self._add(entity)
 
     def _disconnect(self):
         pass
 
-    def _insert_large_document(self, entity: ff.Entity, update: bool = False):
-        obj = self._serialize_entity(entity)
-        n = self._size_limit_kb * 1024
-        first = True
-        try:
-            version = getattr(entity, '_ff_version')
-        except AttributeError:
-            version = 1
-
-        with self._mutex(f'{entity.get_fqn()}-{entity.id_value()}'):
-            for chunk in [obj[i:i+n] for i in range(0, len(obj), n)]:
-                if first:
-                    if update:
-                        criteria = ffd.Attr(entity.id_name()) == entity.id_value()
-                        try:
-                            criteria &= ffd.Attr('version') == version
-                        except AttributeError:
-                            pass
-
-                        if self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
-                            'data': {'__document': ''},
-                            'criteria': criteria,
-                        })) == 0:
-                            raise ffd.ConcurrentUpdateDetected()
-                        data = self._data_fields(entity)
-                        del data['document']
-                        del data['version']
-                        data['__document'] = chunk
-                        self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
-                            'data': data,
-                            'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
-                        }))
-                    else:
-                        data = self._data_fields(entity)
-                        del data['document']
-                        data['__document'] = chunk
-                        data[entity.id_name()] = entity.id_value()
-                        data['version'] = 1
-                        self._execute(*self._generate_query(entity, f'{self._sql_prefix}/insert.sql', {
-                            'data': [data],
-                            'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
-                        }))
-                    first = False
-                else:
-                    sql = f"update {self._fqtn(entity.__class__)} set __document = CONCAT(__document, :str) " \
-                          f"where id = :id{self._cast_uuid()}"
-                    params = {'id': entity.id_value(), 'str': chunk}
-                    self._execute(sql, params)
-
-            sql = f"update {self._fqtn(entity.__class__)} set document = __document{self._cast_json()}, version = :newVersion " \
-                  f"where id = :id{self._cast_uuid()} and version = :version"
-            params = {
-                'id': entity.id_value(),
-                'version': version,
-                'newVersion': version + 1
-            }
-            if self._execute(sql, params) == 0:
-                raise ffd.ConcurrentUpdateDetected()
-
-            self._execute(*self._generate_query(entity, f'{self._sql_prefix}/update.sql', {
-                'data': {'__document': ''},
-                'criteria': ffd.Attr(entity.id_name()) == entity.id_value(),
-            }))
-
-    @staticmethod
-    def _cast_json():
-        return ''
-
-    @staticmethod
-    def _cast_uuid():
-        return ''
-
-    def _fetch_multiple_large_documents(self, sql: str, params: list, entity: Type[ff.Entity]):
-        ret = []
-        q = self._identifier_quote_char
-        sql = sql.replace(f'select {q}document{q}', 'select id')
-        result = ff.retry(lambda: self._execute(sql, params))
-        for row in result:
-            ret.append(self._fetch_large_document(row['id'], entity))
-        return ret
-
-    def _fetch_large_document(self, id_: str, entity: Type[ff.Entity]):
-        n = self._size_limit_kb * 1024
-        start = 1
-        document = ''
-
-        with self._mutex(f'{entity.get_fqn()}-{id_}'):
-            self._execute(f"update {self._fqtn(entity)} set __document = document where {entity.id_name()} = '{id_}'")
-
-            while True:
-                sql, params = self._generate_query(entity, f'{self._sql_prefix}/select.sql', {
-                    'columns': [self._substr(start, n)],
-                    'criteria': ffd.Attr(entity.id_name()) == id_
-                })
-                result = self._execute(sql, params)
-                document += result[0]['document']
-                if len(result[0]['document']) < n:
-                    break
-                start += n
-
-            result = self._execute(f"select version from {self._fqtn(entity)} where {entity.id_name()} = '{id_}'")
-            ret = entity.from_dict(self._serializer.deserialize(document))
-            setattr(ret, '_ff_version', result[0]['version'])
-
-        return ret
-
-    @staticmethod
-    def _substr(start: int, n: int):
-        return f'SUBSTR(__document, {start}, {n}) as document'
-
     def _ensure_connected(self):
         return True
-
-    def _get_result_count(self, sql: str, params: list):
-        count_sql = f"select count(1) as c from ({sql}) a"
-        result = ff.retry(lambda: self._execute(count_sql, params))
-        return result[0]['c']
-
-    def _paginate(self, sql: str, params: list, entity: Type[ff.Entity], raw: bool = False):
-        count = self._execute(f'select count(1) as count from ({sql}) sub', params)[0]['count']
-        limit = 1000
-        offset = 0
-
-        while True:
-            args = []
-            for i in range(0, ceil(count / limit)):
-                args.append((f'{sql} limit {limit} offset {offset}', params))
-                offset += limit
-            results = self._batch_process(self._execute, args)
-
-            do_break = True
-            for result in results:
-                if isinstance(result, Exception):
-                    if isinstance(result, domain.DocumentTooLarge):
-                        limit -= 250
-                        offset = 0
-                        if limit <= 10:
-                            raise domain.DocumentTooLarge()
-                        do_break = False
-                    else:
-                        raise result
-            if do_break:
-                break
-
-        ret = []
-        for result in results:
-            for row in result:
-                ret.append(self._build_entity(entity, row, raw=raw))
-
-        return ret
-
-    def _load_query_results(self, sql: str, params: list, limit: int, offset: int):
-        return ff.retry(
-            lambda: self._execute(f'{sql} limit {limit} offset {offset}', params),
-            should_retry=lambda err: 'Database returned more than the allowed response size limit'
-                                     not in str(err) and '(413)' not in str(err)
-        )
-
-    def _get_average_row_size(self, entity: Type[ff.Entity]):
-        result = self._execute(f"select CEIL(AVG(LENGTH(document))) as c from {self._fqtn(entity)}")
-        try:
-            return result[0]['c'] / 1024
-        except KeyError:
-            return 1
-
-    @staticmethod
-    def _generate_param_entry(name: str, type_: str, val: any):
-        t = 'stringValue'
-        th = None
-        if val is None:
-            t = 'isNull'
-            val = True
-        elif type_ == 'float' or type_ is float:
-            val = float(val)
-            t = 'doubleValue'
-        elif type_ == 'int' or type_ is int:
-            val = int(val)
-            t = 'longValue'
-        elif type_ == 'bool' or type_ is bool:
-            val = bool(val)
-            t = 'booleanValue'
-        elif type_ == 'bytes' or type_ is bytes:
-            t = 'blobValue'
-        elif type_ == 'date' or type_ is date:
-            val = str(val)
-            th = 'DATE'
-        elif type_ == 'datetime' or type_ is datetime:
-            val = str(val).replace('T', ' ')
-            th = 'TIMESTAMP'
-        else:
-            val = str(val)
-
-        ret = {'name': name, 'value': {t: val}}
-        if th is not None:
-            ret['typeHint'] = th
-        return ret
-
-    def _execute(self, sql: str, params: Union[dict, list] = None):
-        if isinstance(params, dict):
-            converted = []
-            for k, v in params.items():
-                converted.append(self._generate_param_entry(k, type(v), v))
-            params = converted
-
-        # result = ff.retry(
-        #     lambda: self._data_api.execute(
-        #         sql,
-        #         params,
-        #         db_arn=self._db_arn,
-        #         db_secret_arn=self._db_secret_arn,
-        #         db_name=self._db_name
-        #     ),
-        #     should_retry=lambda err: 'Database returned more than the allowed response size limit' not in str(err) and '(413)' not in str(err)
-        # )
-        try:
-            result = self._data_api.execute(
-                sql,
-                params,
-                db_arn=self._db_arn,
-                db_secret_arn=self._db_secret_arn,
-                db_name=self._db_name
-            )
-        except ClientError as e:
-            if 'Database returned more than the allowed response size limit' in str(e) or '(413)' in str(e):
-                raise domain.DocumentTooLarge()
-            raise e
-
-        if 'records' in result:
-            ret = []
-            for row in result['records']:
-                counter = 0
-                d = {}
-
-                for data in result['columnMetadata']:
-                    if 'isNull' in row[counter] and row[counter]['isNull']:
-                        d[data['name']] = None
-                    else:
-                        d[data['name']] = list(row[counter].values())[0]
-                    counter += 1
-                ret.append(d)
-            return ret
-        else:
-            return result['numberOfRecordsUpdated']
 
     def clear(self, entity: Type[ffd.Entity]):
         pass
@@ -449,3 +279,60 @@ class DynamodbStorageInterface(ffi.AbstractStorageInterface):
 
     def _build_entity(self, entity: Type[ffd.Entity], data, raw: bool = False):
         pass
+
+
+RESERVED_WORDS = (
+    'ABORT', 'ABSOLUTE', 'ACTION', 'ADD', 'AFTER', 'AGENT', 'AGGREGATE', 'ALL', 'ALLOCATE', 'ALTER', 'ANALYZE',
+    'ANY', 'ARCHIVE', 'ARE', 'ARRAY', 'AS', 'ASC', 'ASCII', 'ASENSITIVE', 'ASSERTION', 'ASYMMETRIC', 'AT', 'ATOMIC',
+    'ATTACH', 'ATTRIBUTE', 'AUTH', 'AUTHORIZATION', 'AUTHORIZE', 'AUTO', 'AVG', 'BACK', 'BACKUP', 'BASE', 'BATCH',
+    'BEFORE', 'BEGIN', 'BETWEEN', 'BIGINT', 'BINARY', 'BIT', 'BLOB', 'BLOCK', 'BOOLEAN', 'BOTH', 'BREADTH', 'BUCKET',
+    'BULK', 'BY', 'BYTE', 'CALL', 'CALLED', 'CALLING', 'CAPACITY', 'CASCADE', 'CASCADED', 'CASE', 'CAST', 'CATALOG',
+    'CHAR', 'CHARACTER', 'CHECK', 'CLASS', 'CLOB', 'CLOSE', 'CLUSTER', 'CLUSTERED', 'CLUSTERING', 'CLUSTERS',
+    'COALESCE', 'COLLATE', 'COLLATION', 'COLLECTION', 'COLUMN', 'COLUMNS', 'COMBINE', 'COMMENT', 'COMMIT', 'COMPACT',
+    'COMPILE', 'COMPRESS', 'CONDITION', 'CONFLICT', 'CONNECT', 'CONNECTION', 'CONSISTENCY', 'CONSISTENT', 'CONSTRAINT',
+    'CONSTRAINTS', 'CONSTRUCTOR', 'CONSUMED', 'CONTINUE', 'CONVERT', 'COPY', 'CORRESPONDING', 'COUNT', 'COUNTER',
+    'CREATE', 'CROSS', 'CUBE', 'CURRENT', 'CURSOR', 'CYCLE', 'DATA', 'DATABASE', 'DATE', 'DATETIME', 'DAY',
+    'DEALLOCATE', 'DEC', 'DECIMAL', 'DECLARE', 'DEFAULT', 'DEFERRABLE', 'DEFERRED', 'DEFINE', 'DEFINED', 'DEFINITION',
+    'DELETE', 'DELIMITED', 'DEPTH', 'DEREF', 'DESC', 'DESCRIBE', 'DESCRIPTOR', 'DETACH', 'DETERMINISTIC', 'DIAGNOSTICS',
+    'DIRECTORIES', 'DISABLE', 'DISCONNECT', 'DISTINCT', 'DISTRIBUTE', 'DO', 'DOMAIN', 'DOUBLE', 'DROP', 'DUMP',
+    'DURATION', 'DYNAMIC', 'EACH', 'ELEMENT', 'ELSE', 'ELSEIF', 'EMPTY', 'ENABLE', 'END', 'EQUAL', 'EQUALS', 'ERROR',
+    'ESCAPE', 'ESCAPED', 'EVAL', 'EVALUATE', 'EXCEEDED', 'EXCEPT', 'EXCEPTION', 'EXCEPTIONS', 'EXCLUSIVE', 'EXEC',
+    'EXECUTE', 'EXISTS', 'EXIT', 'EXPLAIN', 'EXPLODE', 'EXPORT', 'EXPRESSION', 'EXTENDED', 'EXTERNAL', 'EXTRACT',
+    'FAIL', 'FALSE', 'FAMILY', 'FETCH', 'FIELDS', 'FILE', 'FILTER', 'FILTERING', 'FINAL', 'FINISH', 'FIRST', 'FIXED',
+    'FLATTERN', 'FLOAT', 'FOR', 'FORCE', 'FOREIGN', 'FORMAT', 'FORWARD', 'FOUND', 'FREE', 'FROM', 'FULL', 'FUNCTION',
+    'FUNCTIONS', 'GENERAL', 'GENERATE', 'GET', 'GLOB', 'GLOBAL', 'GO', 'GOTO', 'GRANT', 'GREATER', 'GROUP', 'GROUPING',
+    'HANDLER', 'HASH', 'HAVE', 'HAVING', 'HEAP', 'HIDDEN', 'HOLD', 'HOUR', 'IDENTIFIED', 'IDENTITY', 'IF', 'IGNORE',
+    'IMMEDIATE', 'IMPORT', 'IN', 'INCLUDING', 'INCLUSIVE', 'INCREMENT', 'INCREMENTAL', 'INDEX', 'INDEXED', 'INDEXES',
+    'INDICATOR', 'INFINITE', 'INITIALLY', 'INLINE', 'INNER', 'INNTER', 'INOUT', 'INPUT', 'INSENSITIVE', 'INSERT',
+    'INSTEAD', 'INT', 'INTEGER', 'INTERSECT', 'INTERVAL', 'INTO', 'INVALIDATE', 'IS', 'ISOLATION', 'ITEM', 'ITEMS',
+    'ITERATE', 'JOIN', 'KEY', 'KEYS', 'LAG', 'LANGUAGE', 'LARGE', 'LAST', 'LATERAL', 'LEAD', 'LEADING', 'LEAVE', 'LEFT',
+    'LENGTH', 'LESS', 'LEVEL', 'LIKE', 'LIMIT', 'LIMITED', 'LINES', 'LIST', 'LOAD', 'LOCAL', 'LOCALTIME',
+    'LOCALTIMESTAMP', 'LOCATION', 'LOCATOR', 'LOCK', 'LOCKS', 'LOG', 'LOGED', 'LONG', 'LOOP', 'LOWER', 'MAP', 'MATCH',
+    'MATERIALIZED', 'MAX', 'MAXLEN', 'MEMBER', 'MERGE', 'METHOD', 'METRICS', 'MIN', 'MINUS', 'MINUTE', 'MISSING', 'MOD',
+    'MODE', 'MODIFIES', 'MODIFY', 'MODULE', 'MONTH', 'MULTI', 'MULTISET', 'NAME', 'NAMES', 'NATIONAL', 'NATURAL',
+    'NCHAR', 'NCLOB', 'NEW', 'NEXT', 'NO', 'NONE', 'NOT', 'NULL', 'NULLIF', 'NUMBER', 'NUMERIC', 'OBJECT', 'OF',
+    'OFFLINE', 'OFFSET', 'OLD', 'ON', 'ONLINE', 'ONLY', 'OPAQUE', 'OPEN', 'OPERATOR', 'OPTION', 'ORDER',
+    'ORDINALITY', 'OTHER', 'OTHERS', 'OUT', 'OUTER', 'OUTPUT', 'OVER', 'OVERLAPS', 'OVERRIDE', 'OWNER', 'PAD',
+    'PARALLEL', 'PARAMETER', 'PARAMETERS', 'PARTIAL', 'PARTITION', 'PARTITIONED', 'PARTITIONS', 'PATH', 'PERCENT',
+    'PERCENTILE', 'PERMISSION', 'PERMISSIONS', 'PIPE', 'PIPELINED', 'PLAN', 'POOL', 'POSITION', 'PRECISION', 'PREPARE',
+    'PRESERVE', 'PRIMARY', 'PRIOR', 'PRIVATE', 'PRIVILEGES', 'PROCEDURE', 'PROCESSED', 'PROJECT', 'PROJECTION',
+    'PROPERTY', 'PROVISIONING', 'PUBLIC', 'PUT', 'QUERY', 'QUIT', 'QUORUM', 'RAISE', 'RANDOM', 'RANGE', 'RANK', 'RAW',
+    'READ', 'READS', 'REAL', 'REBUILD', 'RECORD', 'RECURSIVE', 'REDUCE', 'REF', 'REFERENCE', 'REFERENCES',
+    'REFERENCING', 'REGEXP', 'REGION', 'REINDEX', 'RELATIVE', 'RELEASE', 'REMAINDER', 'RENAME', 'REPEAT', 'REPLACE',
+    'REQUEST', 'RESET', 'RESIGNAL', 'RESOURCE', 'RESPONSE', 'RESTORE', 'RESTRICT', 'RESULT', 'RETURN', 'RETURNING',
+    'RETURNS', 'REVERSE', 'REVOKE', 'RIGHT', 'ROLE', 'ROLES', 'ROLLBACK', 'ROLLUP', 'ROUTINE', 'ROW', 'ROWS', 'RULE',
+    'RULES', 'SAMPLE', 'SATISFIES', 'SAVE', 'SAVEPOINT', 'SCAN', 'SCHEMA', 'SCOPE', 'SCROLL', 'SEARCH', 'SECOND',
+    'SECTION', 'SEGMENT', 'SEGMENTS', 'SELECT', 'SELF', 'SEMI', 'SENSITIVE', 'SEPARATE', 'SEQUENCE', 'SERIALIZABLE',
+    'SESSION', 'SET', 'SETS', 'SHARD', 'SHARE', 'SHARED', 'SHORT', 'SHOW', 'SIGNAL', 'SIMILAR', 'SIZE', 'SKEWED',
+    'SMALLINT', 'SNAPSHOT', 'SOME', 'SOURCE', 'SPACE', 'SPACES', 'SPARSE', 'SPECIFIC', 'SPECIFICTYPE', 'SPLIT', 'SQL',
+    'SQLCODE', 'SQLERROR', 'SQLEXCEPTION', 'SQLSTATE', 'SQLWARNING', 'START', 'STATE', 'STATIC', 'STATUS', 'STORAGE',
+    'STORE', 'STORED', 'STREAM', 'STRING', 'STRUCT', 'STYLE', 'SUB', 'SUBMULTISET', 'SUBPARTITION', 'SUBSTRING',
+    'SUBTYPE', 'SUM', 'SUPER', 'SYMMETRIC', 'SYNONYM', 'SYSTEM', 'TABLE', 'TABLESAMPLE', 'TEMP', 'TEMPORARY',
+    'TERMINATED', 'TEXT', 'THAN', 'THEN', 'THROUGHPUT', 'TIME', 'TIMESTAMP', 'TIMEZONE', 'TINYINT', 'TO', 'TOKEN',
+    'TOTAL', 'TOUCH', 'TRAILING', 'TRANSACTION', 'TRANSFORM', 'TRANSLATE', 'TRANSLATION', 'TREAT', 'TRIGGER', 'TRIM',
+    'TRUE', 'TRUNCATE', 'TTL', 'TUPLE', 'TYPE', 'UNDER', 'UNDO', 'UNION', 'UNIQUE', 'UNIT', 'UNKNOWN', 'UNLOGGED',
+    'UNNEST', 'UNPROCESSED', 'UNSIGNED', 'UNTIL', 'UPDATE', 'UPPER', 'URL', 'USAGE', 'USE', 'USER', 'USERS', 'USING',
+    'UUID', 'VACUUM', 'VALUE', 'VALUED', 'VALUES', 'VARCHAR', 'VARIABLE', 'VARIANCE', 'VARINT', 'VARYING', 'VIEW',
+    'VIEWS', 'VIRTUAL', 'VOID', 'WAIT', 'WHEN', 'WHENEVER', 'WHERE', 'WHILE', 'WINDOW', 'WITH', 'WITHIN', 'WITHOUT',
+    'WORK', 'WRAPPED', 'WRITE', 'YEAR', 'ZONE'
+)
