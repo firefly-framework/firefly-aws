@@ -17,6 +17,7 @@ from .boto_message_transport import BotoMessageTransport
 from .boto_s3_service import BotoS3Service
 from .cognito_jwt_decoder import CognitoJwtDecoder
 from .data_api import DataApi
+from .ddb_cache import DdbCache
 from .ddb_mutex import DdbMutex
 from .ddb_rate_limiter import DdbRateLimiter
 from .ddb_resource_monitor import *

@@ -39,6 +39,7 @@ class Container(di.Container):
     s3_client = lambda self: boto3.client('s3')
     kinesis_client = lambda self: boto3.client('kinesis')
 
+    cache: ff.Cache = infra.DdbCache
     data_api: infra.DataApi = infra.DataApi
     s3_service: infra.BotoS3Service = infra.BotoS3Service
     lambda_executor: domain.LambdaExecutor = domain.LambdaExecutor
