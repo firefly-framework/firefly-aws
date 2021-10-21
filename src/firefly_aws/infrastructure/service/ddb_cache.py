@@ -38,8 +38,8 @@ class DdbCache(ff.Cache):
             ReturnValues='ALL_OLD'
         )
 
-        if 'Item' in response:
-            return json_util.loads(response['Item'], as_dict=True)['value']
+        if 'Attributes' in response:
+            return json_util.loads(response['Attributes'], as_dict=True)['value']
 
         return None
 
