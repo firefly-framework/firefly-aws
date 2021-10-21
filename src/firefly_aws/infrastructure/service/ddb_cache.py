@@ -28,14 +28,20 @@ class DdbCache(ff.Cache):
 
         return None
 
-    def delete(self, key: str, **kwargs):
-        self._ddb_client.delete_item(
+    def delete(self, key: str, **kwargs) -> Any:
+        response = self._ddb_client.delete_item(
             TableName=self._ddb_table,
             Key=json_util.dumps({
                 'pk': key,
                 'sk': 'CacheItem',
             }, as_dict=True),
+            ReturnValues='ALL_OLD'
         )
+
+        if 'Item' in response:
+            return json_util.loads(response['Item'], as_dict=True)['value']
+
+        return None
 
     def clear(self):
         raise NotImplemented('DdbCache does not support clear()')
