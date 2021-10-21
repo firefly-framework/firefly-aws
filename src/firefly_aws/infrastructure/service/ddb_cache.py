@@ -85,9 +85,10 @@ class DdbCache(ff.Cache):
                 'pk': k,
                 'sk': 'CacheItem',
             }, as_dict=True),
-            'UpdateExpression': f'SET {path} = list_append({path}, :val)',
+            'UpdateExpression': f'SET {path} = list_append(if_not_exists({path}, :empty_list), :val)',
             'ExpressionAttributeValues': json_util.dumps({
                 ':val': [value],
+                ':empty_list': [],
             }, as_dict=True),
             'ExpressionAttributeNames': attribute_names,
             'ReturnValues': 'ALL_NEW',
