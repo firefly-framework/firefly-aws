@@ -19,7 +19,7 @@ firefly-framework==1.2.0
 idna==2.10
 importlib-metadata==3.4.0
 inflection==0.5.1
-Jinja2==2.11.2
+Jinja2==2.11.3
 jinjasql==0.1.8
 jmespath==0.10.0
 MarkupSafe==1.1.1
