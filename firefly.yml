@@ -7,6 +7,7 @@ contexts:
     region: ${AWS_DEFAULT_REGION}
     bucket: firefly-aws
     is_extension: true
+    s3_domain_url: ${S3_DOMAIN_URL}
 #    storage:
 #      services:
 #        s3: ~
