@@ -1010,6 +1010,8 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             'DDB_TABLE': self._ddb_table_name(context.name),
         }
         
+        print("THIS IS LAMBDA EXECUTOR", self._configuration.contexts['firefly_aws'].config.__dict__)
+        print("THIS IS LAMBDA EXECUTOR", self._configuration.contexts['firefly_aws'].config)
         if self._configuration.contexts['firefly_aws'].config.get('s3_domain_url') is not None:
             defaults['S3_DOMAIN_URL'] = self._configuration.contexts['firefly_aws'].config.get('s3_domain_url')
 
