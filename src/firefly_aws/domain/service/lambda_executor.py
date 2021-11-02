@@ -312,7 +312,7 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
             download_url = self._s3_service.store_download(body, apply_compression=False)
             s3_domain_url = self._configuration.contexts.get('firefly_aws').get('s3_domain_url')
             if s3_domain_url:
-                download_url = re.sub('[^(https|http)://].+\.com', s3_domain_url, download_url)
+                download_url = re.sub('(?<=http://)|(?<=https://)(.*)(?=tmp)', s3_domain_url, download_url)
 
             ret['body'] = json.dumps({
                 'location': download_url
