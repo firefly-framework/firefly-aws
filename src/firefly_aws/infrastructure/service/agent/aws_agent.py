@@ -74,7 +74,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
     _s3_service: S3Service = None
     _sns_client = None
     _cloudformation_client = None
-    _adaptive_memory: str = None
+    _adaptive_memory = None
 
     def __init__(self, account_id: str):
         self._account_id = account_id
@@ -90,6 +90,8 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
         if memory_settings is not None:
             self._adaptive_memory = '1'
             os.environ['ADAPTIVE_MEMORY'] = '1'
+        else:
+            self._adaptive_memory = None
 
         self._deployment = deployment
         self._project = self._configuration.all.get('project')
