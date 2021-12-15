@@ -310,6 +310,11 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
 
         if len(body) > 6_000_000:
             download_url = self._s3_service.store_download(body, apply_compression=False)
+            s3_download_domain = self._configuration.contexts[self._context].get('s3_download_domain')
+            if s3_download_domain is not None:
+                parts = download_url.split('/')
+                download_url = f'https://{s3_download_domain}/{"/".join(parts[3:])}'
+
             ret['body'] = json.dumps({
                 'location': download_url
             })
