@@ -12,7 +12,10 @@ class DdbCache(ff.Cache):
     _ddb_table: str = None
 
     def set(self, key: str, value: Any, ttl: int = None, **kwargs) -> Any:
-        return self._set_item(key, value, ttl)
+        if '.' in key:
+            return self._set_property(key, value)
+        else:
+            return self._set_item(key, value, ttl)
 
     def get(self, key: str, **kwargs) -> Any:
         response = self._ddb_client.get_item(
@@ -123,6 +126,32 @@ class DdbCache(ff.Cache):
                 'sk': 'CacheItem',
             }, as_dict=True),
             'UpdateExpression': f'REMOVE {path}[{index}]',
+            'ExpressionAttributeNames': attribute_names,
+            'ReturnValues': 'ALL_NEW',
+        }
+
+        ret = self._ddb_client.update_item(**params)
+        if 'Attributes' in ret:
+            return json_util.loads(ret['Attributes'], as_dict=True)['value']
+
+        return None
+
+    def _set_property(self, key: str, value: Any):
+        k = key.split('.').pop(0)
+        attribute_names = {f'#val_{i}': v for i, v in enumerate(key.split('.'))}
+        attribute_names['#val_0'] = 'value'
+        path = '.'.join([f'#val_{i}' for i, _ in enumerate(key.split('.'))])
+
+        params = {
+            'TableName': self._ddb_table,
+            'Key': json_util.dumps({
+                'pk': k,
+                'sk': 'CacheItem',
+            }, as_dict=True),
+            'UpdateExpression': f'SET {path} = :val',
+            'ExpressionAttributeValues': json_util.dumps({
+                ':val': value,
+            }, as_dict=True),
             'ExpressionAttributeNames': attribute_names,
             'ReturnValues': 'ALL_NEW',
         }
