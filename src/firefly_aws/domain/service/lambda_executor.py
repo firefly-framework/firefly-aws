@@ -223,6 +223,7 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
 
             self._kernel.http_request = {
                 'headers': event['headers'],
+                'body': event.get('body'),
             }
             self._kernel.secured = endpoint.secured
             self._kernel.required_scopes = endpoint.scopes
