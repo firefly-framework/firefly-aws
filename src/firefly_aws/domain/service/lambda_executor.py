@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import base64
-import bz2
 import inspect
 import io
 import json
@@ -23,16 +22,15 @@ import math
 import os
 import re
 import signal
+import urllib.parse
 import uuid
 from contextlib import contextmanager
-from datetime import datetime
 from typing import Union
 
 import firefly as ff
 from multipart import MultipartParser
 
 import firefly_aws.domain as domain
-
 
 STATUS_CODES = {
     'BadRequest': 400,
@@ -149,9 +147,7 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                     return event
                 raise
         elif isinstance(message, ff.Query):
-            print('Handling query from within DC')
             response = self.request(message)
-            print("Got response: ", str(response))
             return self._serializer.deserialize(
                 self._store_large_payloads_in_s3(
                     self._serializer.serialize(response),
@@ -194,6 +190,8 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                         body = self._serializer.deserialize(event['body'])
                     elif 'multipart/form-data' in v.lower():
                         body = self._parse_multipart(v, event['body'])
+                    elif 'x-www-form-urlencoded' in v.lower():
+                        body = urllib.parse.parse_qs(event['body'])
                     else:
                         body = event['body']
             if body is None:
