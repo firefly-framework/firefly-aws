@@ -104,7 +104,6 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
             raise e
 
     def _do_run(self, event: dict, context):
-        print(event)
         self.debug('Event: %s', event)
         self.debug('Context: %s', context)
 
@@ -192,7 +191,10 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                     elif 'multipart/form-data' in v.lower():
                         body = self._parse_multipart(v, event['body'])
                     elif 'x-www-form-urlencoded' in v.lower():
-                        body = urllib.parse.parse_qs(event['body'])
+                        if event.get('isBase64Encoded') is True:
+                            body = urllib.parse.parse_qs(base64.b64decode(event['body']))
+                        else:
+                            body = urllib.parse.parse_qs(event['body'])
                     else:
                         body = event['body']
             if body is None:
