@@ -104,6 +104,7 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
             raise e
 
     def _do_run(self, event: dict, context):
+        print(event)
         self.debug('Event: %s', event)
         self.debug('Context: %s', context)
 
