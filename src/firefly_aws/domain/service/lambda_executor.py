@@ -192,7 +192,7 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                         body = self._parse_multipart(v, event['body'])
                     elif 'x-www-form-urlencoded' in v.lower():
                         if event.get('isBase64Encoded') is True:
-                            body = urllib.parse.parse_qs(base64.b64decode(event['body']))
+                            body = urllib.parse.parse_qs(base64.b64decode(event['body']).decode('utf-8'))
                         else:
                             body = urllib.parse.parse_qs(event['body'])
                     else:
