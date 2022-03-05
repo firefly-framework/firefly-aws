@@ -93,12 +93,7 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
 
     def run(self, event: dict, context):
         try:
-            time = self._get_remaining_time(context)
-            if time is not None:
-                with time_limit(time):
-                    return self._do_run(event, context)
-            else:
-                return self._do_run(event, context)
+            return self._do_run(event, context)
         except Exception as e:
             self._handle_error(e, event, context)
             raise e
@@ -393,11 +388,6 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                 }
             )
         return False
-
-    @staticmethod
-    def _get_remaining_time(context):
-        if context is not None:
-            return math.floor((context.get_remaining_time_in_millis() / 1000) * .9)
 
     def nack_message(self, record: dict):
         pass
