@@ -221,6 +221,8 @@ class LambdaExecutor(ff.DomainService, domain.ResourceNameAware):
                 'headers': event['headers'],
                 'body': event.get('body'),
             }
+            self.info(f'Endpoint secured: {endpoint.secured}')
+            self.info(f'Required scopes: {endpoint.scopes}')
             self._kernel.secured = endpoint.secured
             self._kernel.required_scopes = endpoint.scopes
             self._kernel.user = ff.User()
