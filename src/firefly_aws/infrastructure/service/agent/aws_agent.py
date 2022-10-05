@@ -356,7 +356,7 @@ class AwsAgent(ff.Agent, ResourceNameAware, ff.LoggerAware):
             MessageRetentionPeriod=1209600,
             RedrivePolicy=RedrivePolicy(
                 deadLetterTargetArn=GetAtt(dlq, 'Arn'),
-                maxReceiveCount=1000
+                maxReceiveCount=2
             ),
             DependsOn=dlq
         ))
